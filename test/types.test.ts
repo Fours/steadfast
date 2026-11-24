@@ -1,4 +1,5 @@
 // Type tests: the checks happen in `npm run typecheck`, and vitest runs them as no-ops.
+import type { JsonValue as TroupeJsonValue } from '@kylewillett/troupe';
 import { describe, expectTypeOf, it } from 'vitest';
 import type { JsonValue, Model, ModelResponse, ToolResult } from '../src/index.ts';
 import { callTool, callTools, say, scriptedModel } from '../src/testkit/index.ts';
@@ -20,6 +21,10 @@ describe('types', () => {
 
   it('a scripted model is a Model', () => {
     expectTypeOf(scriptedModel([])).toExtend<Model>();
+  });
+
+  it("JsonValue is Troupe's, so a value that type-checks here is one its journal can hold", () => {
+    expectTypeOf<JsonValue>().toEqualTypeOf<TroupeJsonValue>();
   });
 
   it("a model's raw must be a JsonValue", () => {

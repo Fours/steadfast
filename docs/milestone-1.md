@@ -390,7 +390,7 @@ Do these in order. Each one ends with passing tests.
 | Task | Status | Commit |
 | --- | --- | --- |
 | T0. Scaffold the repo | Done | 8204533 |
-| T1. Models, messages and the scripted model | Done | |
+| T1. Models, messages and the scripted model | Done | 00a11b9 |
 | T2. Tools and the tool-call child | Not started | |
 | T3. The run: events, state and the loop | Not started | |
 | T4. Recovery and interrupted tools | Not started | |
@@ -535,7 +535,7 @@ This milestone sets up records 0001 to 0005 in `docs/decisions/`, all Proposed. 
 2. **Awaiting a run.** Callers hear back through `reportTo`, which suits actors. Plain async code would rather `await` a promise. Should there be a helper, such as `runToCompletion(system, agent, runId, input)`, that spawns a small actor to wait? It could come in T7 if the example wants it.
 3. **What Troupe exports.** Steadfast needs a JSON value type and its check, and `readRun` needs to read a stream from the journal and fold it. If Troupe's public API doesn't offer these, add them to Troupe (with a decision record there) rather than copying its internals.
 
-   **Status (T1):** Troupe 0.2.0 doesn't export them: `JsonValue`, `isJsonValue` and `jsonProblem` are in its `src/json.ts` but not in any entry point. T1 declares the `JsonValue` type in `src/json.ts`, structurally the same as Troupe's, since types alone need nothing at runtime. T2 needs the check, for tool outputs, so before T2 Troupe should export `JsonValue` and `jsonProblem` from its main entry, with a decision record there and a release. Then `src/json.ts` re-exports them instead.
+   **Status:** settled for JSON. Troupe 0.3.0 exports `JsonValue`, `isJsonValue` and `jsonProblem` from its main entry (Troupe's [0037](https://github.com/Fours/troupe/blob/main/docs/decisions/0037-the-json-check-is-public.md)), and `src/json.ts` re-exports `JsonValue` and `jsonProblem` from there. Reading a stream for `readRun` needs nothing new: `Persistence`'s `journal.read(id, fromSeq, limit)` is public.
 4. **Long transcripts.** State holds the whole transcript, and snapshots keep recovery quick, but a long run can outgrow the model's context window. Milestone 2's context management needs to fit with the append-only rule: compaction as a new turn, never an edit.
 5. **Streaming.** Non-streaming with 16,000 output tokens keeps M1 simple. Long turns at high effort can run for minutes, so milestone 2 should stream, and journal only the final response.
 6. **The refusal fallback is on by default.** It's what Anthropic recommends for Claude Opus 5.5. It changes which model may answer and how a declined request is billed, so the adapter's README must say so plainly.
