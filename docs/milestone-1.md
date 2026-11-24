@@ -390,7 +390,7 @@ Do these in order. Each one ends with passing tests.
 | Task | Status | Commit |
 | --- | --- | --- |
 | T0. Scaffold the repo | Done | 8204533 |
-| T1. Models, messages and the scripted model | Not started | |
+| T1. Models, messages and the scripted model | Done | |
 | T2. Tools and the tool-call child | Not started | |
 | T3. The run: events, state and the loop | Not started | |
 | T4. Recovery and interrupted tools | Not started | |
@@ -421,10 +421,10 @@ Do these in order. Each one ends with passing tests.
 
 **Done when** tests cover:
 
-- [ ] `scriptedModel` answers in order, records each request, and throws past the end of its script.
-- [ ] `faultyModel` fails exactly the calls it was told to, with the errors it was given, and passes the rest through.
-- [ ] `ModelError` carries `retryable` and `retryAfterMs`, and checks them when it's made.
-- [ ] Type tests: `say` and `callTool` build valid `ModelResponse`s, and a model's `raw` must be a `JsonValue`.
+- [x] `scriptedModel` answers in order, records each request, and throws past the end of its script.
+- [x] `faultyModel` fails exactly the calls it was told to, with the errors it was given, and passes the rest through.
+- [x] `ModelError` carries `retryable` and `retryAfterMs`, and checks them when it's made.
+- [x] Type tests: `say` and `callTool` build valid `ModelResponse`s, and a model's `raw` must be a `JsonValue`.
 
 ### T2. Tools and the tool-call child
 
@@ -534,6 +534,8 @@ This milestone sets up records 0001 to 0005 in `docs/decisions/`, all Proposed. 
 1. **The first provider.** This spec assumes Anthropic's Messages API for the first adapter, since the example and the demo use Claude. Milestone 2 adds a second, to keep `Model` honest.
 2. **Awaiting a run.** Callers hear back through `reportTo`, which suits actors. Plain async code would rather `await` a promise. Should there be a helper, such as `runToCompletion(system, agent, runId, input)`, that spawns a small actor to wait? It could come in T7 if the example wants it.
 3. **What Troupe exports.** Steadfast needs a JSON value type and its check, and `readRun` needs to read a stream from the journal and fold it. If Troupe's public API doesn't offer these, add them to Troupe (with a decision record there) rather than copying its internals.
+
+   **Status (T1):** Troupe 0.2.0 doesn't export them: `JsonValue`, `isJsonValue` and `jsonProblem` are in its `src/json.ts` but not in any entry point. T1 declares the `JsonValue` type in `src/json.ts`, structurally the same as Troupe's, since types alone need nothing at runtime. T2 needs the check, for tool outputs, so before T2 Troupe should export `JsonValue` and `jsonProblem` from its main entry, with a decision record there and a release. Then `src/json.ts` re-exports them instead.
 4. **Long transcripts.** State holds the whole transcript, and snapshots keep recovery quick, but a long run can outgrow the model's context window. Milestone 2's context management needs to fit with the append-only rule: compaction as a new turn, never an edit.
 5. **Streaming.** Non-streaming with 16,000 output tokens keeps M1 simple. Long turns at high effort can run for minutes, so milestone 2 should stream, and journal only the final response.
 6. **The refusal fallback is on by default.** It's what Anthropic recommends for Claude Opus 5.5. It changes which model may answer and how a declined request is billed, so the adapter's README must say so plainly.
