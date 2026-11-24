@@ -389,7 +389,7 @@ Do these in order. Each one ends with passing tests.
 
 | Task | Status | Commit |
 | --- | --- | --- |
-| T0. Scaffold the repo | In progress | |
+| T0. Scaffold the repo | Done | 8204533 |
 | T1. Models, messages and the scripted model | Not started | |
 | T2. Tools and the tool-call child | Not started | |
 | T3. The run: events, state and the loop | Not started | |
@@ -410,7 +410,7 @@ Do these in order. Each one ends with passing tests.
 **Done when:**
 
 - [x] `npm run lint && npm run typecheck && npm test && npm run build` passes on an empty suite, locally.
-- [ ] The same passes in CI, on Node 22, 24 and 26. (Needs the GitHub repo.)
+- [x] The same passes in CI, on Node 22, 24 and 26.
 
 ### T1. Models, messages and the scripted model
 

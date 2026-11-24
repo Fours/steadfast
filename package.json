@@ -5,6 +5,14 @@
   "description": "Durable AI agents on Troupe actors: supervised model and tool calls, crash recovery from a journal, and exact replay.",
   "license": "MIT",
   "author": "Kyle Willett",
+  "homepage": "https://github.com/Fours/steadfast#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Fours/steadfast.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Fours/steadfast/issues"
+  },
   "keywords": [
     "agent",
     "agents",
