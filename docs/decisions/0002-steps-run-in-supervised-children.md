@@ -24,6 +24,12 @@ The run never calls a model or a tool itself. For each piece of pending work, it
 
 Proposed. T2 and T5 prove it: a rate-limited model call is restarted with backoff on virtual time, each attempt is journaled, and a crash between attempts doesn't reset the count.
 
+**T2 (2026-11-24):** `test/steps/tool-call.test.ts`:
+
+- An idempotent tool's failure tells the parent `attemptFailed`, then throws. Supervision restarts the child with backoff on virtual time, and the next attempt's result reaches the parent.
+- A failure that isn't retryable is reported without throwing, and the tool runs once.
+- A timeout is the child's own timer: it aborts the tool's signal, and a late result from that attempt is ignored.
+
 ## Consequences
 
 - Milestone 2's sub-agents are another kind of child, supervised the same way.

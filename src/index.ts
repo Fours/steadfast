@@ -15,3 +15,4 @@ export {
   type Turn,
   type Usage,
 } from './model.js';
+export { RetryableToolError, tool, type Tool, type ToolContext, type ToolDef } from './tool.js';

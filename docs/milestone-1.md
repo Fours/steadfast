@@ -66,7 +66,8 @@ const readLog = tool({
   },
   idempotent: true,
   timeoutMs: 10_000,
-  run: async ({ service, lines }, { signal }) => tailLog(service, lines, { signal }),
+  run: async ({ service, lines }: { service: string; lines: number }, { signal }) =>
+    tailLog(service, lines, { signal }),
 });
 ```
 
@@ -81,7 +82,10 @@ export interface ToolDef<I extends JsonValue, O extends JsonValue> {
   parse?: StandardSchemaV1<unknown, I>;
   /** Safe to run twice with the same input. Default false. See "Interrupted tools". */
   idempotent?: boolean;
-  /** Default 60,000. A call that takes longer is aborted and counts as a retryable failure. */
+  /**
+   * Default 60,000. A call that takes longer is aborted. An idempotent tool retries. One that isn't
+   * reports that it may or may not have run, as an interrupted tool does.
+   */
   timeoutMs?: number;
   run(input: I, ctx: ToolContext): Promise<O>;
 }
@@ -99,7 +103,8 @@ export interface ToolContext {
 - `run`'s output must be a JSON value, since it's journaled. It's checked before it's written.
 - A tool reports a failure by throwing. What happens next depends on whether the tool is idempotent ("Errors and retries").
 - A tool that isn't idempotent can throw `RetryableToolError` to say "nothing happened, try me again", for example when a request was refused before it was sent.
-- Invalid definitions throw at `tool()`: a bad name, a missing description, a `timeoutMs` that isn't a positive integer.
+- `I` is `parse`'s output when there's a `parse`. Without one, it's whatever `run`'s input is annotated with, as in the example, and the model's input reaches `run` unchecked. It defaults to `JsonValue`. Inferring it from the JSON Schema in `input` would need a lot of type machinery, so it's left out.
+- Invalid definitions throw at `tool()`: a bad name, a missing description, a `timeoutMs` that isn't a positive integer, and an unknown option, which is most likely a typo such as `idempotant`.
 
 ### Defining an agent
 
@@ -271,6 +276,7 @@ So Steadfast runs idempotent tools at least once, and other tools at most once.
 | Model call, not retryable (a bad request, bad credentials) | Finish with `failed` and the error's message. |
 | Idempotent tool throws, or times out | Journal `attemptFailed`, restart with backoff. When attempts run out, journal `toolFinished` with the error, and let the model see it. |
 | Tool that isn't idempotent throws | One attempt only: journal `toolFinished` with the error, and let the model see it. |
+| Tool that isn't idempotent times out | It may have acted before the timeout, so it isn't retried: journal `toolFinished` with `interrupted: true`, as for a crash ("Interrupted tools"). |
 | Tool that isn't idempotent throws `RetryableToolError` | Treated like an idempotent tool's failure. |
 | Tool input fails `parse` | Journal `toolFinished` with the validation error, without running the tool, and let the model see it. |
 | The model calls a tool that doesn't exist | Journal `toolFinished` with an error naming the tools that do. |
@@ -391,7 +397,7 @@ Do these in order. Each one ends with passing tests.
 | --- | --- | --- |
 | T0. Scaffold the repo | Done | 8204533 |
 | T1. Models, messages and the scripted model | Done | 00a11b9 |
-| T2. Tools and the tool-call child | Not started | |
+| T2. Tools and the tool-call child | Done | |
 | T3. The run: events, state and the loop | Not started | |
 | T4. Recovery and interrupted tools | Not started | |
 | T5. Failures, retries and budgets | Not started | |
@@ -433,12 +439,12 @@ Do these in order. Each one ends with passing tests.
 
 **Done when** tests cover:
 
-- [ ] `tool()` throws on a bad name, a missing description and a bad `timeoutMs`.
-- [ ] The child tells its parent the result, then stops. A non-JSON output becomes an error result.
-- [ ] A timeout aborts the signal and counts as a retryable failure.
-- [ ] `parse` failures become error results, and the tool never runs.
-- [ ] An idempotent tool's failure reports `attemptFailed` and throws, so supervision restarts it. A non-idempotent tool's failure doesn't throw. `RetryableToolError` does.
-- [ ] The idempotency key is the same on every attempt.
+- [x] `tool()` throws on a bad name, a missing description and a bad `timeoutMs`.
+- [x] The child tells its parent the result, then stops. A non-JSON output becomes an error result.
+- [x] A timeout aborts the signal and counts as a retryable failure. A tool that isn't idempotent reports that it may or may not have run instead.
+- [x] `parse` failures become error results, and the tool never runs.
+- [x] An idempotent tool's failure reports `attemptFailed` and throws, so supervision restarts it. A non-idempotent tool's failure doesn't throw. `RetryableToolError` does.
+- [x] The idempotency key is the same on every attempt.
 
 ### T3. The run: events, state and the loop
 
@@ -540,3 +546,5 @@ This milestone sets up records 0001 to 0005 in `docs/decisions/`, all Proposed. 
 5. **Streaming.** Non-streaming with 16,000 output tokens keeps M1 simple. Long turns at high effort can run for minutes, so milestone 2 should stream, and journal only the final response.
 6. **The refusal fallback is on by default.** It's what Anthropic recommends for Claude Opus 5.5. It changes which model may answer and how a declined request is billed, so the adapter's README must say so plainly.
 7. **Retrying a tool's failure vs reporting it.** This spec retries idempotent tools before telling the model. For some tools, such as a search that returns nothing, the model would do better hearing at once. Should a tool be able to opt out of retries?
+8. **`retryAfterMs` can't raise a backoff yet.** "Steps as children" says a `retryAfterMs` on a model error raises the restart delay for that attempt. Troupe's `restartWithBackoff` works the delay out from its own options and the restart count, and a failure can't add to it. T5 needs this for 429s with a `retry-after`. The fix belongs in Troupe, for example a failure that carries a minimum delay, which `decide` honours. Raise it there before T5 rather than working around it here.
+9. **Settling while a tool runs.** Troupe's `settle`, and so `advance`, waits for every piped promise. A tool that only finishes when its timeout aborts it can't be reached that way, since the timeout needs time to pass. T2's tests drive `kit.scheduler` directly while such a tool runs, which works but is easy to get wrong. T3 to T5 need it more: tools running in parallel, a crash mid-tool, and deadlines. Troupe's 0010 solved the same problem for asks. A testkit option, or a way to mark a piped promise as settled by time, would solve it for steps. Raise it in Troupe before T3.
