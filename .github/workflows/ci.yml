@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        # Every supported LTS line. Keep in step with engines in package.json, and with Troupe's.
+        node: [22.x, 24.x, 26.x]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      # Enforces the 90% line threshold on src/.
+      - run: npm run coverage
+      - run: npm run build

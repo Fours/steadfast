@@ -1,0 +1,9 @@
+.DS_Store
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+.env
+*.local
+# The example's SQLite journal (npm run example).
+.steadfast/

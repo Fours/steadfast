@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // No Node types: src/ may only use what every runtime has (decision 0004). When src/ needs a
+    // runtime global such as AbortController, declare it in src/globals.d.ts, as Troupe does.
+    "types": [],
+    "noEmit": false,
+    "allowImportingTsExtensions": false,
+    "rootDir": "src",
+    "outDir": "dist",
+    "declaration": true,
+    "declarationMap": false,
+    "sourceMap": false
+  },
+  "include": ["src"]
+}
