@@ -1,12 +1,23 @@
 // Type tests: the checks happen in `npm run typecheck`, and vitest runs them as no-ops.
-import type { JsonValue as TroupeJsonValue } from '@kylewillett/troupe';
+import type { ActorDef, ActorRef, JsonValue as TroupeJsonValue } from '@kylewillett/troupe';
 import { describe, expectTypeOf, it } from 'vitest';
-import type { StandardSchemaV1 } from '@kylewillett/troupe/persistence';
 import {
+  inMemoryPersistence,
+  type PersistentState,
+  type StandardSchemaV1,
+} from '@kylewillett/troupe/persistence';
+import {
+  agent,
   tool,
+  type Agent,
   type JsonValue,
   type Model,
   type ModelResponse,
+  type Outcome,
+  type RunMsg,
+  type RunReport,
+  type RunState,
+  type RunStatus,
   type Tool,
   type ToolContext,
   type ToolResult,
@@ -114,5 +125,41 @@ describe('types', () => {
     tool({ name: 'a', description: 'd', input, run: () => Promise.resolve(new Date()) });
     // @ts-expect-error Nor is undefined.
     tool({ name: 'b', description: 'd', input, run: () => Promise.resolve(undefined) });
+  });
+
+  it('agent.run gives an actor definition for the run protocol, and reports a RunReport', () => {
+    const a = agent({
+      name: 'triage',
+      model: scriptedModel([]),
+      system: 's',
+      persistence: inMemoryPersistence(),
+    });
+    expectTypeOf(a).toEqualTypeOf<Agent>();
+    expectTypeOf(a.run).returns.toEqualTypeOf<ActorDef<RunMsg, PersistentState<RunState>>>();
+    expectTypeOf(a.run).parameter(1).toHaveProperty('reportTo');
+
+    // Never called: these only have to type-check.
+    const calls = (reportTo: ActorRef<RunReport>) => {
+      a.run('r1', { input: 'go', reportTo });
+      // @ts-expect-error A ref for some other protocol can't hear the report.
+      a.run('r1', { input: 'go', reportTo: {} as ActorRef<string> });
+      // @ts-expect-error The input is text.
+      a.run('r1', { input: { text: 'go' } });
+    };
+    expectTypeOf(calls).toBeFunction();
+
+    expectTypeOf<RunReport>().toEqualTypeOf<{
+      readonly type: 'runFinished';
+      readonly runId: string;
+      readonly outcome: Outcome;
+      readonly text: string;
+      readonly usage: { readonly inputTokens: number; readonly outputTokens: number };
+    }>();
+  });
+
+  it('status takes a ref for RunStatus', () => {
+    expectTypeOf<Extract<RunMsg, { type: 'status' }>['replyTo']>().toEqualTypeOf<
+      ActorRef<RunStatus>
+    >();
   });
 });

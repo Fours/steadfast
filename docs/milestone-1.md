@@ -175,8 +175,10 @@ const desk = actor<DeskMsg, null>({
 export type RunMsg =
   | { type: 'status'; replyTo: ActorRef<RunStatus> }
   | { type: 'cancel'; reason: string }
-  // Internal: sent by the run's own children and timers. Exported so the type is complete.
+  // Internal: sent by the run itself, its children and its timers. Exported so the type is complete.
+  | { type: 'start' }
   | { type: 'modelReplied'; step: number; response: ModelResponse }
+  | { type: 'modelFailed'; step: number; error: StepError }
   | { type: 'toolReturned'; step: number; callId: string; result: ToolResult }
   | { type: 'attemptFailed'; step: number; target: StepTarget; error: StepError }
   | { type: 'deadline' };
@@ -185,6 +187,8 @@ export type RunMsg =
 - `status` replies with the phase, the step, usage so far, and what the run is waiting on.
 - `cancel` finishes the run with outcome `cancelled` and stops its children, which aborts their signals. Milestone 2 makes cancellation cascade to sub-agents.
 - Internal messages carry their `step`, and the run ignores any for a step it's no longer on. A slow child of an old incarnation can't change a newer one's state.
+- `start` is how a fresh run persists `runStarted`. Troupe's `onSignal` can't persist, so on a `recoveryCompleted` with no events the run tells itself `start`. A command that arrived during recovery is ahead of it in the mailbox and sees the phase as `new`. Any other phase ignores `start`.
+- `modelFailed` is the model-call child's report of a failure that retrying won't fix. It finishes the run with `failed`.
 
 ### Events and state
 
@@ -217,6 +221,8 @@ export interface RunState {
   usage: { inputTokens: number; outputTokens: number };
   /** What the run is waiting on. Derived from the events, never journaled on its own. */
   pending: { kind: 'model' } | { kind: 'tools'; callIds: readonly string[] } | { kind: 'none' };
+  /** The current step's tool results so far. When the last is in, they become one turn, in call order. */
+  stepResults: readonly { callId: string; result: ToolResult }[];
   /** Failed attempts so far, keyed by step and target. */
   attempts: Readonly<Record<string, number>>;
   outcome?: Outcome;
@@ -227,7 +233,7 @@ export interface RunState {
 - **The journal holds facts, never intentions.** There's no `modelRequested` or `toolStarted` event. What the run must do next is derived from state: after `runStarted`, or once every tool call of a step has finished, it calls the model. After a response with tool calls, it runs them. That's what makes recovery simple ("Recovery").
 - `startedAt` comes from the agent's `clock`, not from `ctx.now()`, which is monotonic within a process but means nothing in the next one.
 - Events and state must be JSON values. Troupe checks them before they're written.
-- One command can persist several events. A response with no tool calls persists `modelResponded` and `runFinished` together.
+- One command can persist several events. A response with no tool calls persists `modelResponded` and `runFinished` together. Its stop reason sets the outcome: `endTurn` is `completed`, `maxOutputTokens` is `maxOutputTokens`, `refusal` is `refused`, and `toolUse` with no tool calls is `failed`.
 - Snapshots are on, every 100 events, so long runs recover quickly. Bump `snapshots.version` whenever `RunState` changes shape.
 
 ### Steps as children
@@ -244,7 +250,7 @@ The run never calls a model or a tool itself ([0002](decisions/0002-steps-run-in
 - **A retryable failure throws.** The child first tells the parent `attemptFailed`, so the attempt is journaled, and then throws. The parent spawned it with `supervise.restartWithBackoff({ minMs: 1_000, maxMs: 60_000, randomFactor: 0.2 })`, so Troupe restarts it after a delay, and its new `initial` calls again. A `retryAfterMs` on the error raises the delay for that attempt.
 - **A failure that isn't retryable doesn't throw.** The child tells the parent, and stops. The parent decides what it means ("Errors and retries").
 - **When attempts run out,** the parent stops the child. Watching it is how the parent knows it's gone.
-- Children are named by step and call id, so the parent finds them with `ctx.child(name)`, and a stale child of an earlier step can't be confused with a current one.
+- Children are named by step and call id (`model-3`, `tool-3-toolu_01A…`), so the parent finds them with `ctx.child(name)`, and a stale child of an earlier step can't be confused with a current one. A call id that doesn't fit Troupe's actor names falls back to its place in the response: `tool-3~0`.
 - Timeouts are the child's own timer. When it fires, the child aborts its signal and treats it as a retryable failure.
 
 ### Recovery
@@ -397,8 +403,8 @@ Do these in order. Each one ends with passing tests.
 | --- | --- | --- |
 | T0. Scaffold the repo | Done | 8204533 |
 | T1. Models, messages and the scripted model | Done | 00a11b9 |
-| T2. Tools and the tool-call child | Done | |
-| T3. The run: events, state and the loop | Not started | |
+| T2. Tools and the tool-call child | Done | 25a34ae |
+| T3. The run: events, state and the loop | Done | |
 | T4. Recovery and interrupted tools | Not started | |
 | T5. Failures, retries and budgets | Not started | |
 | T6. The Anthropic adapter | Not started | |
@@ -451,17 +457,18 @@ Do these in order. Each one ends with passing tests.
 - `src/agent.ts`: `agent()`, `AgentOptions`, `Budget`, and `agent.run(runId, options)`
 - `src/run/`: the persistent actor (`onCommand`, the pure `onEvent`, `RunMsg`, `RunEvent`, `RunState`), and the model-call child in `src/steps/model-call.ts`
 - The happy path only: start, model, tools in parallel, model, finish, report. T4 adds recovery past a clean start, T5 failures and budgets.
+- Landed early, as the loop needed them: a failed attempt is journaled (T5 counts them and gives up), a model failure that isn't retryable finishes the run with `failed`, and an unknown tool becomes an error result naming the tools that exist. T5 still owns their Done-when tests.
 
 **Done when** tests cover:
 
-- [ ] A run with no tool calls persists `runStarted`, `modelResponded` and `runFinished`, and reports `completed` with the response's text.
-- [ ] A step with three tool calls runs them at the same time, journals each result, and sends them to the model as one turn, in call order.
-- [ ] The transcript only grows: every request's transcript starts with the previous request's.
-- [ ] Each response's `raw` reaches the next request unchanged.
-- [ ] `status` replies with the phase, step, usage and what the run is waiting on.
-- [ ] A message for a step the run isn't on is ignored.
-- [ ] `onEvent` is pure: folding the same events twice gives equal states.
-- [ ] `agent()` throws on duplicate tool names and on bad budgets.
+- [x] A run with no tool calls persists `runStarted`, `modelResponded` and `runFinished`, and reports `completed` with the response's text.
+- [x] A step with three tool calls runs them at the same time, journals each result, and sends them to the model as one turn, in call order.
+- [x] The transcript only grows: every request's transcript starts with the previous request's.
+- [x] Each response's `raw` reaches the next request unchanged.
+- [x] `status` replies with the phase, step, usage and what the run is waiting on.
+- [x] A message for a step the run isn't on is ignored.
+- [x] `onEvent` is pure: folding the same events twice gives equal states.
+- [x] `agent()` throws on duplicate tool names and on bad budgets.
 
 ### T4. Recovery and interrupted tools
 
@@ -547,4 +554,6 @@ This milestone sets up records 0001 to 0005 in `docs/decisions/`, all Proposed. 
 6. **The refusal fallback is on by default.** It's what Anthropic recommends for Claude Opus 5.5. It changes which model may answer and how a declined request is billed, so the adapter's README must say so plainly.
 7. **Retrying a tool's failure vs reporting it.** This spec retries idempotent tools before telling the model. For some tools, such as a search that returns nothing, the model would do better hearing at once. Should a tool be able to opt out of retries?
 8. **`retryAfterMs` can't raise a backoff yet.** "Steps as children" says a `retryAfterMs` on a model error raises the restart delay for that attempt. Troupe's `restartWithBackoff` works the delay out from its own options and the restart count, and a failure can't add to it. T5 needs this for 429s with a `retry-after`. The fix belongs in Troupe, for example a failure that carries a minimum delay, which `decide` honours. Raise it there before T5 rather than working around it here.
-9. **Settling while a tool runs.** Troupe's `settle`, and so `advance`, waits for every piped promise. A tool that only finishes when its timeout aborts it can't be reached that way, since the timeout needs time to pass. T2's tests drive `kit.scheduler` directly while such a tool runs, which works but is easy to get wrong. T3 to T5 need it more: tools running in parallel, a crash mid-tool, and deadlines. Troupe's 0010 solved the same problem for asks. A testkit option, or a way to mark a piped promise as settled by time, would solve it for steps. Raise it in Troupe before T3.
+9. **Settling while a tool runs.** Troupe's `settle`, and so `advance`, waits for every piped promise. A tool that only finishes when its timeout aborts it can't be reached that way, since the timeout needs time to pass. T2's tests drive `kit.scheduler` directly while such a tool runs, which works but is easy to get wrong. T3 to T5 need it more: tools running in parallel, a crash mid-tool, and deadlines. Troupe's 0010 solved the same problem for asks. A testkit option, or a way to mark a piped promise as settled by time, would solve it for steps.
+
+   **Status:** T3 didn't need it. Its tools settle by themselves, and the tests that hold a tool open drive the scheduler with a bounded `drive` helper in `test/run/helpers.ts`. T4 (a crash mid-tool) and T5 (deadlines and timeouts) do need it, so raise it in Troupe before T4.

@@ -16,3 +16,26 @@ export {
   type Usage,
 } from './model.js';
 export { RetryableToolError, tool, type Tool, type ToolContext, type ToolDef } from './tool.js';
+export {
+  agent,
+  type Agent,
+  type AgentOptions,
+  type Budget,
+  type CheckedBudget,
+  type RunOptions,
+} from './agent.js';
+export type {
+  ModelCallReport,
+  ModelFailed,
+  ModelReplied,
+  Outcome,
+  Pending,
+  RunEvent,
+  RunMsg,
+  RunReport,
+  RunState,
+  RunStatus,
+  StepError,
+  StepTarget,
+} from './run/types.js';
+export type { AttemptFailed, ToolCallReport, ToolReturned } from './steps/messages.js';

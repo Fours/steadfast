@@ -30,6 +30,12 @@ Proposed. T2 and T5 prove it: a rate-limited model call is restarted with backof
 - A failure that isn't retryable is reported without throwing, and the tool runs once.
 - A timeout is the child's own timer: it aborts the tool's signal, and a late result from that attempt is ignored.
 
+**T3 (2026-11-24):** `test/steps/model-call.test.ts` and `test/run/run.test.ts`:
+
+- The model call is a child of its own, with the same shape as a tool call. A retryable `ModelError` is reported as `attemptFailed`, then thrown, and supervision calls again after a backoff. Anything else is reported as `modelFailed` without a restart.
+- A step's three tool calls run in three children at the same time. Each tool is held until all three have started, which couldn't happen if they ran one after another.
+- Messages for a step the run isn't on are ignored: late and early model answers, results for other steps, and calls the step didn't make.
+
 ## Consequences
 
 - Milestone 2's sub-agents are another kind of child, supervised the same way.

@@ -24,6 +24,14 @@ Each run is one Troupe persistent actor, with its own event stream. Every fact t
 
 Proposed. Milestone 1 proves it in T3 and T4: a test stops the system after every event of a five-step run, spawns the run again on the same journal, and checks that it ends as an uninterrupted run would, with the same model requests.
 
+**T3 (2026-11-24):** `test/run/run.test.ts` and `test/run/state.test.ts`:
+
+- A run's journal holds only facts: `runStarted`, `modelResponded`, `toolFinished`, `attemptFailed` and `runFinished`. A response that ends the run is written together with `runFinished`, in one append.
+- What runs next is derived from state alone. The same `act` starts the model call or the step's tool calls after any event, and leaves a child that's still running alone.
+- `onEvent` is pure. Folding a recorded run's events twice, with every event and every state frozen as it's made, gives equal states, and every prefix folds to a JSON value.
+
+Recovery past a clean start is T4's half of the proof, so this stays Proposed.
+
 ## Consequences
 
 - Recovery is Troupe's: replay the stream, then act on `recoveryCompleted`.

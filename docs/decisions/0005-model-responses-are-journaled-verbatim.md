@@ -24,6 +24,13 @@ Each `ModelResponse` keeps the provider's content verbatim in `raw`, alongside S
 
 Proposed. T3 proves each response's `raw` reaches the next request unchanged and that the transcript only grows. T7 proves `readRun` rebuilds every state of a recorded run without calling the model.
 
+**T3 (2026-11-24):** `test/run/run.test.ts`, over a five-step run with scripted responses:
+
+- Every request's transcript starts with the previous request's, and is longer.
+- Each response reaches the next request unchanged, `raw` included, compared with the response as the script made it.
+
+T6 proves the adapter sends assistant turns back as `raw`, and T7 proves `readRun`, so this stays Proposed.
+
 ## Consequences
 
 - The journal grows with every response, thinking included. Snapshots keep recovery quick, but streams aren't small.
