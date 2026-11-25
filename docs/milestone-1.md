@@ -359,8 +359,8 @@ const model = anthropicModel({ client: new Anthropic() });
 - **Defaults:** model `claude-opus-5-5`, `max_tokens` 16,000, non-streaming, `output_config: { effort: 'high' }`, and adaptive thinking (the model's default, so `thinking` is left out). Each is an option.
 - **Refusal fallback on by default:** requests go through `client.beta.messages.create` with `betas: ['server-side-fallback-2026-07-01']` and `fallbacks: 'default'`, so a request a safety classifier declines is retried on a fallback model in the same call. `fallbacks: false` turns it off. `ModelResponse.model` records which model answered. A response that still ends in `refusal` finishes the run with `refused`.
 - **Retries belong to supervision:** each request passes `maxRetries: 0`, so the SDK doesn't retry behind the run's back and every attempt is journaled.
-- **Errors:** an error with `status` 408, 409, 429 or 500 and above, or with no status (a connection error), is retryable, and a `retry-after` header becomes `retryAfterMs`. Anything else isn't. The check reads `status` and `headers` structurally, since the adapter never imports the SDK's error classes.
-- **Mapping:** a user turn is a user message. An assistant turn is `{ role: 'assistant', content: raw }`. A tool-results turn is one user message of `tool_result` blocks, with `is_error: true` for failures and the output as JSON text. Stop reasons map `end_turn` → `endTurn`, `tool_use` → `toolUse`, `max_tokens` → `maxOutputTokens`, `refusal` → `refusal`. Anything else is a `ModelError` that isn't retryable, until milestone 2 handles it.
+- **Errors:** an error with `status` 408, 409, 429 or 500 and above, or with no status (a connection error), is retryable. Anything else isn't. The API's own `x-should-retry` header, when it's there, overrides the status. A `retry-after-ms` header, or else `retry-after` in seconds, becomes `retryAfterMs`, rounded up to whole ms. The HTTP-date form of `retry-after` is ignored, since reading it needs the wall clock. The check reads `status` and `headers` structurally, since the adapter never imports the SDK's error classes.
+- **Mapping:** a user turn is a user message. An assistant turn is `{ role: 'assistant', content: raw }`. A tool-results turn is one user message of `tool_result` blocks, with `is_error: true` for failures and the output as JSON text. Stop reasons map `end_turn` → `endTurn`, `tool_use` → `toolUse`, `max_tokens` → `maxOutputTokens`, `refusal` → `refusal`. Anything else is a `ModelError` that isn't retryable, until milestone 2 handles it. Text blocks are joined with nothing between, since citations split one sentence across several. `usage.inputTokens` adds the cache-write and cache-read input tokens to `input_tokens`, so `maxTokens` counts everything the model read. An empty system prompt and an empty tool list are left out of the request.
 - Tool inputs are parsed from the response's `tool_use` blocks as objects, never matched as strings.
 
 ### Reading a run back
@@ -407,8 +407,8 @@ Do these in order. Each one ends with passing tests.
 | T2. Tools and the tool-call child | Done | 25a34ae |
 | T3. The run: events, state and the loop | Done | 0746670 |
 | T4. Recovery and interrupted tools | Done | 9933cb5 |
-| T5. Failures, retries and budgets | Done | |
-| T6. The Anthropic adapter | Not started | |
+| T5. Failures, retries and budgets | Done | b64fea0 |
+| T6. The Anthropic adapter | Done | |
 | T7. readRun, the example and the README | Not started | |
 
 ### T0. Scaffold the repo
@@ -512,11 +512,11 @@ Do these in order. Each one ends with passing tests.
 
 **Done when** tests cover, with a fake client and no network:
 
-- [ ] A transcript maps to the Messages API shape described in "The Anthropic adapter", including tool results as one user message and assistant turns as `raw`.
-- [ ] Each stop reason maps as described, and an unexpected one is a `ModelError` that isn't retryable.
-- [ ] Errors are classified by status, and `retry-after` becomes `retryAfterMs`.
-- [ ] Requests pass `maxRetries: 0`, the fallback beta and `fallbacks: 'default'` by default, and leave them out when `fallbacks: false`.
-- [ ] Type test: `new Anthropic()` from the real SDK fits the structural client type.
+- [x] A transcript maps to the Messages API shape described in "The Anthropic adapter", including tool results as one user message and assistant turns as `raw`.
+- [x] Each stop reason maps as described, and an unexpected one is a `ModelError` that isn't retryable.
+- [x] Errors are classified by status, and `retry-after` becomes `retryAfterMs`.
+- [x] Requests pass `maxRetries: 0`, the fallback beta and `fallbacks: 'default'` by default, and leave them out when `fallbacks: false`.
+- [x] Type test: `new Anthropic()` from the real SDK fits the structural client type.
 
 ### T7. readRun, the example and the README
 
@@ -555,6 +555,8 @@ This milestone sets up records 0001 to 0005 in `docs/decisions/`, all Proposed. 
    **Status:** settled for JSON. Troupe 0.3.0 exports `JsonValue`, `isJsonValue` and `jsonProblem` from its main entry (Troupe's [0037](https://github.com/Fours/troupe/blob/main/docs/decisions/0037-the-json-check-is-public.md)), and `src/json.ts` re-exports `JsonValue` and `jsonProblem` from there. Reading a stream for `readRun` needs nothing new: `Persistence`'s `journal.read(id, fromSeq, limit)` is public.
 4. **Long transcripts.** State holds the whole transcript, and snapshots keep recovery quick, but a long run can outgrow the model's context window. Milestone 2's context management needs to fit with the append-only rule: compaction as a new turn, never an edit.
 5. **Streaming.** Non-streaming with 16,000 output tokens keeps M1 simple. Long turns at high effort can run for minutes, so milestone 2 should stream, and journal only the final response.
+
+   Streaming also changes the refusal fallback. When a fallback happens mid-output on a stream, the declined partial stays in `content`, and the API wants its thinking and `tool_use` blocks before the last `fallback` block left out when the turn is sent back. That conflicts with sending `raw` back verbatim ([0005](decisions/0005-model-responses-are-journaled-verbatim.md)). A non-streaming response never includes the declined partial, so M1 is safe. Milestone 2 needs to decide where that rule lives, for example in the adapter's mapping, with `raw` still journaled as it came.
 6. **The refusal fallback is on by default.** It's what Anthropic recommends for Claude Opus 5.5. It changes which model may answer and how a declined request is billed, so the adapter's README must say so plainly.
 7. **Retrying a tool's failure vs reporting it.** This spec retries idempotent tools before telling the model. For some tools, such as a search that returns nothing, the model would do better hearing at once. Should a tool be able to opt out of retries?
 8. **`retryAfterMs` can't raise a backoff yet.** "Steps as children" says a `retryAfterMs` on a model error raises the restart delay for that attempt. Troupe's `restartWithBackoff` works the delay out from its own options and the restart count, and a failure can't add to it. T5 needs this for 429s with a `retry-after`. The fix belongs in Troupe, for example a failure that carries a minimum delay, which `decide` honours. Raise it there before T5 rather than working around it here.

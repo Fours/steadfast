@@ -1,6 +1,6 @@
 # 0004. Built on Troupe, with no other runtime dependencies: providers are adapters over structurally typed clients
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-24
 - **Milestone:** 1
 
@@ -22,7 +22,13 @@ Steadfast needs actors, supervision, persistence and virtual-time tests, which T
 
 ## Evidence
 
-Proposed. T6's type test proves the real Anthropic client fits the structural type, and the build check proves `src/` has no Node types and no other dependencies.
+T6's type test proves the real Anthropic client fits the structural type, and the build check proves `src/` has no Node types and no other dependencies.
+
+**T6 (2026-11-24):**
+
+- `test/anthropic/types.test.ts` checks that `Anthropic` from `@anthropic-ai/sdk` 1.14.0 extends `AnthropicClient`, and that `anthropicModel({ client: new Anthropic() })` compiles. Making it fit took one loosening: a message's `content` is optional in the structural type, because the SDK's own message union includes effort-only system messages with no content.
+- `npm run typecheck` builds `src/`, `src/anthropic/` included, with no Node types. `package.json`'s only runtime dependencies are peers: Troupe, and `@anthropic-ai/sdk` as an optional one. `dist/anthropic/` mentions the SDK only in a doc comment's example.
+- The adapter's tests run on a fake client, with no SDK and no network.
 
 ## Consequences
 

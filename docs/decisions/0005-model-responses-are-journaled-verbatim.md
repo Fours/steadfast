@@ -31,6 +31,11 @@ Proposed. T3 proves each response's `raw` reaches the next request unchanged and
 
 T6 proves the adapter sends assistant turns back as `raw`, and T7 proves `readRun`, so this stays Proposed.
 
+**T6 (2026-11-24):** in `test/anthropic/`:
+
+- `mapping.test.ts`: an assistant turn goes back as the very `raw` array the response kept, thinking blocks included, even when its `text` and `toolCalls` say something else.
+- `model.test.ts`: a run on `anthropicModel` over a fake client sends the first response's content, a thinking block included, back unchanged in the second request, and journals the same content as the response's `raw`.
+
 ## Consequences
 
 - The journal grows with every response, thinking included. Snapshots keep recovery quick, but streams aren't small.
