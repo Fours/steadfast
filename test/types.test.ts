@@ -11,7 +11,10 @@ import {
   delegate,
   tool,
   type Agent,
+  type ApprovalCheck,
   type Budget,
+  type DecideReply,
+  type PendingApproval,
   type DelegateOptions,
   type RunLimits,
   type TimelineToolCall,
@@ -146,8 +149,42 @@ describe('types', () => {
         run: (args: { n: number }) => Promise.resolve(args.n),
       }),
       tool({ name: 'b', description: 'd', input, run: () => Promise.resolve(['x']) }),
+      // A needsApproval function of a narrower input fits too, as run does.
+      tool({
+        name: 'c',
+        description: 'd',
+        input,
+        needsApproval: (args: { severity: string }) => args.severity === 'sev1',
+        run: (args: { severity: string }) => Promise.resolve(args.severity),
+      }),
     ];
     expectTypeOf(tools).toExtend<readonly Tool[]>();
+  });
+
+  it('needsApproval gets the parsed input, and decide replies with a DecideReply', () => {
+    const input = { type: 'object' } as const;
+    const schema: StandardSchemaV1<unknown, { severity: 'sev1' | 'sev2' }> = {
+      '~standard': { version: 1, vendor: 'test', validate: () => ({ issues: [] }) },
+    };
+    tool({
+      name: 'page_oncall',
+      description: 'd',
+      input,
+      parse: schema,
+      needsApproval: (args) => {
+        expectTypeOf(args).toEqualTypeOf<{ severity: 'sev1' | 'sev2' }>();
+        return args.severity === 'sev1';
+      },
+      run: () => Promise.resolve(null),
+    });
+    expectTypeOf<ApprovalCheck<{ n: number }>>().toEqualTypeOf<(input: { n: number }) => boolean>();
+    expectTypeOf<Extract<RunMsg, { type: 'decide' }>['replyTo']>().toEqualTypeOf<
+      ActorRef<DecideReply> | undefined
+    >();
+    expectTypeOf<DecideReply>().toEqualTypeOf<
+      { readonly ok: true } | { readonly ok: false; readonly reason: 'notWaiting' | 'unknownRun' }
+    >();
+    expectTypeOf<RunStatus['approvals']>().toEqualTypeOf<readonly PendingApproval[]>();
   });
 
   it("a tool's output must be a JSON value", () => {
@@ -244,6 +281,8 @@ describe('types', () => {
     expectTypeOf<DelegateOptions>().toEqualTypeOf<{
       readonly name?: string;
       readonly description: string;
+      readonly needsApproval?: boolean | ApprovalCheck<{ readonly task: string }>;
+      readonly approvalTimeoutMs?: number;
     }>();
     // @ts-expect-error A description is required.
     expectTypeOf(() => delegate(analyst, {})).toBeFunction();

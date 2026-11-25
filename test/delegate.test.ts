@@ -30,6 +30,9 @@ describe('delegate()', () => {
     });
     expect(Object.isFrozen(t)).toBe(true);
     expect(delegate(a, { name: 'ask_log_analyst', description: 'x' }).name).toBe('ask_log_analyst');
+    expect(t.needsApproval).toBe(false);
+    const asked = delegate(a, { description: 'x', needsApproval: true, approvalTimeoutMs: 5_000 });
+    expect(asked).toMatchObject({ needsApproval: true, approvalTimeoutMs: 5_000 });
     // A run starts a sub-run instead. Called directly, it says so.
     await expect(
       t.run(
@@ -67,10 +70,32 @@ describe('delegate()', () => {
       { description: '  ' },
       'description must be a non-empty string',
     ],
+    [
+      'a needsApproval that is neither a boolean nor a function',
+      analyst(),
+      { description: 'x', needsApproval: 1 },
+      'needsApproval must be a boolean or a function, got 1',
+    ],
+    [
+      'an approvalTimeoutMs on a delegation that never needs approval',
+      analyst(),
+      { description: 'x', approvalTimeoutMs: 1_000 },
+      'delegate "log-analyst": approvalTimeoutMs is only for a tool that needs approval',
+    ],
   ])('throws on %s', (_name, a, options, message) => {
     const call = () => delegate(a, options as DelegateOptions);
     expect(call).toThrow(TypeError);
     expect(call).toThrow(message);
+  });
+
+  it('throws a RangeError on an approvalTimeoutMs that isn’t a positive integer', () => {
+    expect(() =>
+      delegate(analyst(), { description: 'x', needsApproval: true, approvalTimeoutMs: -1 }),
+    ).toThrow(
+      new RangeError(
+        'delegate "log-analyst": approvalTimeoutMs must be a positive integer, got -1',
+      ),
+    );
   });
 
   it('can be given to an agent like any tool', () => {

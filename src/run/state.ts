@@ -16,6 +16,7 @@ const initial: RunState = {
   treeUsage: { inputTokens: 0, outputTokens: 0 },
   pending: { kind: 'none' },
   stepResults: [],
+  approvals: {},
   attempts: {},
 };
 /** The state before any event. */
@@ -97,6 +98,26 @@ export function onEvent(state: RunState, event: RunEvent): RunState {
               ? { kind: 'tools', callIds: response.toolCalls.map((c) => c.id) }
               : { kind: 'none' },
         stepResults: [],
+        approvals: {},
+      };
+    }
+    case 'approvalRequested': {
+      // Only the current step's calls are asked about, in the write of the response that made them.
+      if (event.step !== state.step) return state;
+      const approval = {
+        status: 'waiting' as const,
+        requestedAt: event.requestedAt,
+        ...(event.timeoutMs === undefined ? {} : { timeoutMs: event.timeoutMs }),
+      };
+      return { ...state, approvals: { ...state.approvals, [event.callId]: approval } };
+    }
+    case 'approvalDecided': {
+      const approval = state.approvals[event.callId];
+      if (event.step !== state.step || approval === undefined) return state;
+      const status = event.approved ? ('approved' as const) : ('denied' as const);
+      return {
+        ...state,
+        approvals: { ...state.approvals, [event.callId]: { ...approval, status } },
       };
     }
     case 'toolFinished': {

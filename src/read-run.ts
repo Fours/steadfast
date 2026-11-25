@@ -39,6 +39,23 @@ export interface TimelineSubRun {
   readonly runId: string;
 }
 
+/** A call's approval: the request, and the decision once there is one (decision 0007). */
+export interface TimelineApproval {
+  /** The `seq` of the `approvalRequested` event. */
+  readonly requestedSeq: number;
+  readonly requestedAt: number;
+  readonly timeoutMs?: number;
+  /** Missing while the call waits. */
+  readonly decision?: {
+    readonly seq: number;
+    readonly approved: boolean;
+    readonly by: string;
+    readonly note?: string;
+    readonly decidedAt: number;
+    readonly timedOut?: true;
+  };
+}
+
 /** One tool call of a step: what the model asked for, the failed attempts, and the result. */
 export interface TimelineToolCall {
   readonly callId: string;
@@ -54,6 +71,8 @@ export interface TimelineToolCall {
    * other tools, and for a delegation that couldn't start, such as one with no depth left.
    */
   readonly subRun?: TimelineSubRun;
+  /** Missing for a call nobody was asked about. */
+  readonly approval?: TimelineApproval;
 }
 
 /** One step: a model call, and the tool calls its response asked for. */
@@ -158,6 +177,7 @@ interface DraftTool {
   result?: ToolResult;
   resultSeq?: number;
   subRun?: TimelineSubRun;
+  approval?: TimelineApproval;
 }
 
 interface DraftStep {
@@ -220,6 +240,30 @@ function stepsOf(events: readonly TimelineEvent[], agent: Agent, runId: string):
         const attempt = { seq, error: event.error };
         if (event.target.kind === 'model') draft.attempts.push(attempt);
         else toolFor(draft, event.target.callId).attempts.push(attempt);
+        break;
+      }
+      case 'approvalRequested':
+        toolFor(stepFor(event.step), event.callId).approval = {
+          requestedSeq: seq,
+          requestedAt: event.requestedAt,
+          ...(event.timeoutMs === undefined ? {} : { timeoutMs: event.timeoutMs }),
+        };
+        break;
+      case 'approvalDecided': {
+        const call = toolFor(stepFor(event.step), event.callId);
+        // A decision is only journaled for a request, but a reader shouldn't throw on one without.
+        if (call.approval === undefined) break;
+        call.approval = {
+          ...call.approval,
+          decision: {
+            seq,
+            approved: event.approved,
+            by: event.by,
+            ...(event.note === undefined ? {} : { note: event.note }),
+            decidedAt: event.decidedAt,
+            ...(event.timedOut === undefined ? {} : { timedOut: event.timedOut }),
+          },
+        };
         break;
       }
       case 'toolFinished': {

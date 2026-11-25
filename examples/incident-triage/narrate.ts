@@ -51,6 +51,14 @@ export function describe(event: RunEvent, names: ReadonlyMap<string, string>): s
       return [
         `${tag(event.step)}${names.get(event.callId) ?? event.callId} ${result(event.result)}`,
       ];
+    case 'approvalRequested':
+      return [`${tag(event.step)}${event.tool} waits for a person's approval`];
+    case 'approvalDecided': {
+      const name = names.get(event.callId) ?? event.callId;
+      if (event.timedOut === true) return [`${tag(event.step)}${name}: nobody decided in time`];
+      const verdict = event.approved ? 'approved' : 'denied';
+      return [`${tag(event.step)}${name} ${verdict} by ${event.by}`];
+    }
     case 'attemptFailed': {
       const what =
         event.target.kind === 'model'

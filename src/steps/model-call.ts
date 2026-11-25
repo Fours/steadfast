@@ -7,7 +7,7 @@
 import { actor, type ActorDef, type ActorRef, type Result } from '@kylewillett/troupe';
 import { jsonProblem } from '../json.js';
 import { ModelError, type Model, type ModelRequest, type ModelResponse } from '../model.js';
-import type { ModelCallReport } from '../run/types.js';
+import type { ApprovalCheckResult, ModelCallReport } from '../run/types.js';
 
 /** Everything one model call needs. */
 export interface ModelCallChildOptions {
@@ -18,15 +18,29 @@ export interface ModelCallChildOptions {
   readonly replyTo: ActorRef<ModelCallReport>;
   /** Given each piece of streamed text, with the attempt it belongs to, from 1. */
   readonly onText?: (text: string, attempt: number) => void;
+  /**
+   * Checks which of the response's calls need a person's approval, before the response is
+   * reported, so the run journals the answer with it (decision 0007). Returns undefined when no
+   * call might, and never rejects.
+   */
+  readonly checkApprovals?: (
+    response: ModelResponse,
+  ) => Promise<readonly ApprovalCheckResult[]> | undefined;
 }
 
-/** The child's own message, from its `pipeToSelf`. */
-export interface ModelCallMsg {
-  readonly type: 'settled';
-  /** Which incarnation made the call, so an aborted earlier attempt's result is ignored. */
-  readonly attempt: number;
-  readonly result: Result<ModelResponse>;
-}
+/** The child's own messages, from its `pipeToSelf`. */
+export type ModelCallMsg =
+  | {
+      readonly type: 'settled';
+      /** Which incarnation made the call, so an aborted earlier attempt's result is ignored. */
+      readonly attempt: number;
+      readonly result: Result<ModelResponse>;
+    }
+  | {
+      readonly type: 'checked';
+      readonly response: ModelResponse;
+      readonly approvals: readonly ApprovalCheckResult[];
+    };
 
 /** Which attempt this incarnation is making. */
 export interface ModelCallState {
@@ -53,7 +67,7 @@ function messageOf(error: unknown): string {
  * `restartWithBackoff`.
  */
 export function modelCall(options: ModelCallChildOptions): ActorDef<ModelCallMsg, ModelCallState> {
-  const { model, request, step, replyTo, onText } = options;
+  const { model, request, step, replyTo, onText, checkApprovals } = options;
   // Per incarnation, and not in state, since a controller isn't a plain value (Troupe's 0001).
   let attempts = 0;
   let controller = new AbortController();
@@ -84,6 +98,16 @@ export function modelCall(options: ModelCallChildOptions): ActorDef<ModelCallMsg
     },
 
     receive(state, msg, ctx) {
+      if (msg.type === 'checked') {
+        replyTo.tell({
+          type: 'modelReplied',
+          step,
+          response: msg.response,
+          approvals: msg.approvals,
+        });
+        ctx.stop();
+        return state;
+      }
       // An earlier incarnation's call, aborted as it ended. That incarnation has already reported.
       if (msg.attempt !== state.attempt) return state;
       const { result } = msg;
@@ -91,6 +115,20 @@ export function modelCall(options: ModelCallChildOptions): ActorDef<ModelCallMsg
         // Checked here, so a bad response is the model's failure, not a journal write that fails
         // the run itself.
         const problem = jsonProblem(result.value);
+        const checking = problem === undefined ? checkApprovals?.(result.value) : undefined;
+        if (checking !== undefined) {
+          // The child stops once it has told the answer. The check never rejects, but if it did,
+          // asking about every call would be the safe answer.
+          const response = result.value;
+          ctx.pipeToSelf(checking, (checked) => ({
+            type: 'checked',
+            response,
+            approvals: checked.ok
+              ? checked.value
+              : response.toolCalls.map((c) => ({ callId: c.id, ask: true as const })),
+          }));
+          return state;
+        }
         if (problem === undefined) {
           replyTo.tell({ type: 'modelReplied', step, response: result.value });
         } else {

@@ -246,6 +246,8 @@ describe('a run', () => {
         usage: usage(0, 0),
         treeUsage: usage(0, 0),
         pending: { kind: 'none' },
+        approvals: [],
+        subRuns: [],
       });
 
       await drive(kit, () => readLog.calls.length === 1);
@@ -255,6 +257,8 @@ describe('a run', () => {
         usage: usage(100, 10),
         treeUsage: usage(100, 10),
         pending: { kind: 'tools', callIds: ['read_log_1'] },
+        approvals: [],
+        subRuns: [],
       });
 
       gate.resolve('502s since 14:02');
@@ -265,6 +269,8 @@ describe('a run', () => {
         usage: usage(300, 30),
         treeUsage: usage(300, 30),
         pending: { kind: 'none' },
+        approvals: [],
+        subRuns: [],
         outcome: 'completed',
       });
     });

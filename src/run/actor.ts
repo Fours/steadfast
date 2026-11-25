@@ -3,7 +3,7 @@
 // state says what to start next. Nothing about what the run meant to do is journaled, so the same
 // derivation drives a fresh start and a recovery.
 
-import { supervise, type ActorContext, type ActorDef } from '@kylewillett/troupe';
+import { supervise, type ActorContext, type ActorDef, type ActorRef } from '@kylewillett/troupe';
 import {
   persistentActor,
   type Effect,
@@ -25,6 +25,16 @@ import {
   tokensRunOut,
   type Stop,
 } from './budget.js';
+import {
+  APPROVAL_TAG,
+  approvalTimer,
+  checkApprovals,
+  denied,
+  isWaiting,
+  pendingApprovals,
+  TIMEOUT_BY,
+  timedOut,
+} from './approvals.js';
 import { continues, finalText, initialState, onEvent, outcomeOf } from './state.js';
 import {
   ACTOR_NAME,
@@ -32,10 +42,11 @@ import {
   isDelegation,
   planSubRun,
   subRunChildName,
-  subRunId,
 } from './sub-run.js';
 import {
   attemptKey,
+  type DecideReply,
+  type ModelReplied,
   type RunEvent,
   type RunMsg,
   type RunLimits,
@@ -44,6 +55,7 @@ import {
   type RunState,
   type RunStatus,
   type StepTarget,
+  type SubRun,
 } from './types.js';
 
 type Ctx = PersistentContext<RunMsg, RunEvent, RunState>;
@@ -68,10 +80,10 @@ const SUB_RUN_BACKOFF = supervise.restartWithBackoff({
   randomFactor: 0.2,
 });
 /** Snapshot every this many events. Bump the version whenever `RunState` changes shape. */
-const SNAPSHOTS = { every: 100, version: 2 } as const;
+const SNAPSHOTS = { every: 100, version: 3 } as const;
 /** What the model is told about a tool call that wasn't safe to run again (decision 0003). */
 export const INTERRUPTED = mayHaveRun('The tool was interrupted');
-/** The key of the run's one timer. */
+/** The key of the run's deadline timer. Each call waiting for approval has one of its own. */
 const DEADLINE = 'deadline';
 
 /** The model-call child's name for a step. */
@@ -89,16 +101,24 @@ export function toolChildName(step: number, callId: string, index: number): stri
   return ACTOR_NAME.test(name) ? name : `tool-${String(step)}~${String(index)}`;
 }
 
-/** What `status` replies with. */
-export function statusOf(state: RunState): RunStatus {
+/** What `status` replies with, given the run's id and its live sub-runs. */
+export function statusOf(state: RunState, runId: string, subRuns: readonly SubRun[]): RunStatus {
   return {
     phase: state.phase,
     step: state.step,
     usage: state.usage,
     treeUsage: state.treeUsage,
     pending: state.pending,
+    approvals: pendingApprovals(state, runId),
+    subRuns,
     ...(state.outcome === undefined ? {} : { outcome: state.outcome }),
   };
+}
+
+/** A sub-run the run's state says is working for it, and its child's name. */
+interface LiveSubRun extends SubRun {
+  readonly callId: string;
+  readonly childName: string;
 }
 
 /** The actor definition for one run of `agent`. Made by `agent.run`, which checks its arguments. */
@@ -145,7 +165,8 @@ export function runActor(
       // Whatever ended the run, nothing it started is wanted any more. Stopping a child aborts its
       // signal, and anything it reports afterwards is for a run that has finished, so it's ignored.
       for (const child of ctx.children()) ctx.stop(child);
-      ctx.timers.cancel(DEADLINE);
+      // The deadline, and every approval's timeout: a decision can't matter any more.
+      ctx.timers.cancelAll();
       report(state);
       return;
     }
@@ -172,6 +193,7 @@ export function runActor(
         step,
         replyTo: ctx.self,
         ...(onText === undefined ? {} : { onText }),
+        checkApprovals: (response) => checkApprovals(tools, response),
       });
       ctx.spawn(child, name, { supervision: STEP_BACKOFF });
       return;
@@ -181,6 +203,8 @@ export function runActor(
       const calls = last?.role === 'assistant' ? last.response.toolCalls : [];
       calls.forEach((call, index) => {
         if (!pending.callIds.includes(call.id)) return;
+        // Waiting for a person: nothing starts until the decision is journaled (decision 0007).
+        if (state.approvals[call.id]?.status === 'waiting') return;
         const t = tools.get(call.name);
         if (t !== undefined && isDelegation(t)) {
           // A sub-run is started again on recovery, never reported as interrupted: it has a
@@ -276,6 +300,40 @@ export function runActor(
   const finished = (stop: Stop): RunEvent => ({ type: 'runFinished', ...stop });
 
   /**
+   * The events that go with a response the run goes on from: a request for each call the
+   * model-call child said needs approval, then an error result for each whose input failed
+   * `parse`, about which nobody is asked.
+   */
+  const approvalEvents = (msg: ModelReplied): RunEvent[] => {
+    const checks = msg.approvals ?? [];
+    const calls = new Map(msg.response.toolCalls.map((c) => [c.id, c]));
+    const requestedAt = agent.clock();
+    const requests = checks.flatMap((check): RunEvent[] => {
+      const call = calls.get(check.callId);
+      if (call === undefined || !('ask' in check)) return [];
+      const timeoutMs = tools.get(call.name)?.approvalTimeoutMs;
+      return [
+        {
+          type: 'approvalRequested',
+          runId,
+          step: msg.step,
+          callId: call.id,
+          tool: call.name,
+          input: call.input,
+          requestedAt,
+          ...(timeoutMs === undefined ? {} : { timeoutMs }),
+        },
+      ];
+    });
+    const invalid = checks.flatMap((check) =>
+      calls.has(check.callId) && 'invalid' in check
+        ? [toolFinishedWith(msg.step, check.callId, check.invalid)]
+        : [],
+    );
+    return [...requests, ...invalid];
+  };
+
+  /**
    * Starts the deadline timer for what's left of it, measured from the run's start on the agent's
    * clock, so it holds across restarts. Returns false if it has already passed, having told the
    * run so: onSignal can't persist, so finishing is a command like any other.
@@ -291,21 +349,48 @@ export function runActor(
     return true;
   };
 
-  /** The pending delegation whose sub-run is `subId`, with its child's name. */
-  const delegationFor = (
-    state: RunState,
-    subId: string,
-  ): { callId: string; childName: string } | undefined => {
+  /**
+   * The sub-runs the state says are working for the run: the current step's pending delegations
+   * that aren't waiting for a decision and can start. Derived as `act` starts them.
+   */
+  const subRunsOf = (state: RunState): LiveSubRun[] => {
     const { pending } = state;
-    if (state.phase !== 'running' || pending.kind !== 'tools') return undefined;
+    if (state.phase !== 'running' || pending.kind !== 'tools') return [];
     const last = state.transcript.at(-1);
     const calls = last?.role === 'assistant' ? last.response.toolCalls : [];
-    const index = calls.findIndex((_, i) => subRunId(runId, state.step, i) === subId);
-    const call = calls[index];
-    if (call === undefined || !pending.callIds.includes(call.id)) return undefined;
-    const t = tools.get(call.name);
-    if (t === undefined || !isDelegation(t)) return undefined;
-    return { callId: call.id, childName: subRunChildName(state.step, call.id, index) };
+    const depthLeft = depthLeftOf(agent.budget, state.limits);
+    return calls.flatMap((call, index) => {
+      if (!pending.callIds.includes(call.id)) return [];
+      if (state.approvals[call.id]?.status === 'waiting') return [];
+      const t = tools.get(call.name);
+      if (t === undefined || !isDelegation(t)) return [];
+      const plan = planSubRun(t, call, runId, state.step, index, depthLeft);
+      if (plan.kind !== 'start') return [];
+      return [
+        {
+          agent: plan.agent.name,
+          runId: plan.runId,
+          callId: call.id,
+          childName: subRunChildName(state.step, call.id, index),
+        },
+      ];
+    });
+  };
+
+  /**
+   * Starts the timeout of every call waiting for approval, for what's left of it, measured from
+   * its request on the agent's clock, so it holds across restarts. One already past fires at once.
+   */
+  const armApprovals = (state: RunState, ctx: ActorContext<RunMsg>): void => {
+    for (const [callId, approval] of Object.entries(state.approvals)) {
+      if (approval.status !== 'waiting' || approval.timeoutMs === undefined) continue;
+      const left = Math.max(0, approval.requestedAt + approval.timeoutMs - agent.clock());
+      ctx.timers.startSingle(
+        approvalTimer(callId),
+        { type: 'approvalTimedOut', step: state.step, callId },
+        left,
+      );
+    }
   };
 
   /** The child working on `target` of `step`, if it hasn't terminated. */
@@ -329,7 +414,74 @@ export function runActor(
   const onCommand = (state: RunState, msg: RunMsg, ctx: Ctx): Effect<RunEvent, RunState> => {
     switch (msg.type) {
       case 'status':
-        return ctx.reply(msg.replyTo, statusOf(state));
+        return ctx.reply(
+          msg.replyTo,
+          statusOf(
+            state,
+            runId,
+            subRunsOf(state).map((r) => ({ agent: r.agent, runId: r.runId })),
+          ),
+        );
+      case 'decide': {
+        const reply = (r: DecideReply): void => {
+          msg.replyTo?.tell(r);
+        };
+        if (msg.runId !== runId) {
+          // For a run under this one: the sub-run whose id the target is, or starts. So a caller
+          // only ever needs the root's ref.
+          const sub = subRunsOf(state).find(
+            (r) => msg.runId === r.runId || msg.runId.startsWith(`${r.runId}/`),
+          );
+          const child = sub === undefined ? undefined : ctx.child(sub.childName);
+          // The child of a sub-run's name is always that sub-run's actor, spawned by `act`.
+          if (child === undefined) reply({ ok: false, reason: 'unknownRun' });
+          else (child as ActorRef<RunMsg>).tell(msg);
+          return ctx.none();
+        }
+        // The first decision wins. Anything after it, or for a call never asked about, changes
+        // nothing.
+        if (!isWaiting(state, msg.callId)) {
+          reply({ ok: false, reason: 'notWaiting' });
+          return ctx.none();
+        }
+        const decided: RunEvent = {
+          type: 'approvalDecided',
+          step: state.step,
+          callId: msg.callId,
+          approved: msg.approved,
+          by: msg.by,
+          ...(msg.note === undefined ? {} : { note: msg.note }),
+          decidedAt: agent.clock(),
+        };
+        // A denial is the call's result, in the same write, so the tool never runs.
+        const events: RunEvent[] = msg.approved
+          ? [decided]
+          : [decided, toolFinishedWith(state.step, msg.callId, denied(msg.by, msg.note))];
+        return persist(ctx, ...events).thenRun((next) => {
+          ctx.timers.cancel(approvalTimer(msg.callId));
+          reply({ ok: true });
+          act(next, ctx);
+        });
+      }
+      case 'approvalTimedOut': {
+        const approval = state.approvals[msg.callId];
+        if (msg.step !== state.step || !isWaiting(state, msg.callId) || approval === undefined) {
+          return ctx.none();
+        }
+        return persistThenAct(
+          ctx,
+          {
+            type: 'approvalDecided',
+            step: state.step,
+            callId: msg.callId,
+            approved: false,
+            by: TIMEOUT_BY,
+            decidedAt: agent.clock(),
+            timedOut: true,
+          },
+          toolFinishedWith(state.step, msg.callId, timedOut(approval.timeoutMs ?? 0)),
+        );
+      }
       case 'start':
         if (state.phase !== 'new') return ctx.none();
         return persist(ctx, started()).thenRun((next) => {
@@ -362,7 +514,15 @@ export function runActor(
         const stop = afterResponse(agent.budget, state.limits, msg.step, treeUsage, response);
         // A budget that runs out ends the run instead of the tools it asked for, in the same write.
         if (stop !== undefined) return persistThenAct(ctx, responded, finished(stop));
-        if (continues(response)) return persistThenAct(ctx, responded);
+        if (continues(response)) {
+          // What the child found about approvals is journaled with the response, so the wait,
+          // and a function's answer, survive any restart (decision 0007).
+          const checked = approvalEvents(msg);
+          return persist(ctx, responded, ...checked).thenRun((next) => {
+            armApprovals(next, ctx);
+            act(next, ctx);
+          });
+        }
         // A response that asks for nothing ends the run, in the same write.
         return persistThenAct(ctx, responded, {
           type: 'runFinished',
@@ -389,7 +549,7 @@ export function runActor(
       case 'runFinished': {
         // A sub-run's report. Its id says which delegation it answers, since both are derived
         // from the journal. A report for a call the run isn't waiting on changes nothing.
-        const call = delegationFor(state, msg.runId);
+        const call = subRunsOf(state).find((r) => r.runId === msg.runId);
         if (call === undefined) return ctx.none();
         const done: RunEvent = {
           type: 'toolFinished',
@@ -455,6 +615,9 @@ export function runActor(
     initial: initialState,
     onCommand,
     onEvent,
+    // An inbox follows every run's approvals with one projection on this tag.
+    tags: (event) =>
+      event.type === 'approvalRequested' || event.type === 'approvalDecided' ? [APPROVAL_TAG] : [],
     onSignal(state, signal, ctx) {
       if (signal.type !== 'recoveryCompleted') return;
       // First, on every spawn, so a listener knows which events it will hear and which are in the
@@ -474,11 +637,19 @@ export function runActor(
       }
       // A deadline that has passed while the run was down finishes it before anything starts.
       if (state.phase === 'running' && !armDeadline(state, ctx)) return;
+      // Calls still waiting go on waiting, for what's left of their timeouts. Nothing starts for
+      // them, and the model isn't asked again.
+      if (state.phase === 'running') armApprovals(state, ctx);
       // The same derivation as after any event. A finished run reports, and starts nothing.
       act(state, ctx, true);
     },
     ...(agent.persistence.snapshots === undefined ? {} : { snapshots: SNAPSHOTS }),
   });
+}
+
+/** A call's error result, as an event. */
+function toolFinishedWith(step: number, callId: string, error: string): RunEvent {
+  return { type: 'toolFinished', step, callId, result: { ok: false, error } };
 }
 
 /** Whether the run is waiting on the model call for `step`. */

@@ -61,31 +61,36 @@ function issuesText(issues: readonly StandardSchemaV1.Issue[]): string {
     .join('; ');
 }
 
+/** The model's input after the tool's `parse`, or why it can't be used. */
+export type CheckedInput =
+  { readonly ok: true; readonly value: JsonValue } | { readonly ok: false; readonly error: string };
+
 /**
- * Checks the model's input with the tool's `parse`, if it has one, then runs the tool. Only `run`
- * can reject: an input that fails its check, or a check that throws, is an `invalid` attempt.
+ * Checks the model's input with the tool's `parse`, if it has one. Never rejects: an input that
+ * fails the check, or a check that throws, is an error for the model.
+ */
+export async function checkInput(tool: Tool, input: JsonValue): Promise<CheckedInput> {
+  if (tool.parse === undefined) return { ok: true, value: input };
+  let checked: StandardSchemaV1.Result<JsonValue>;
+  try {
+    checked = await tool.parse['~standard'].validate(input);
+  } catch (error) {
+    return { ok: false, error: `Couldn't check the input for ${tool.name}: ${messageOf(error)}` };
+  }
+  if (checked.issues !== undefined) {
+    return { ok: false, error: `Invalid input for ${tool.name}: ${issuesText(checked.issues)}` };
+  }
+  return { ok: true, value: checked.value };
+}
+
+/**
+ * Checks the model's input, then runs the tool. Only `run` can reject: an input that fails its
+ * check, or a check that throws, is an `invalid` attempt.
  */
 async function runAttempt(tool: Tool, input: JsonValue, ctx: ToolContext): Promise<Attempt> {
-  let parsed: JsonValue = input;
-  if (tool.parse !== undefined) {
-    let checked: StandardSchemaV1.Result<JsonValue>;
-    try {
-      checked = await tool.parse['~standard'].validate(input);
-    } catch (error) {
-      return {
-        kind: 'invalid',
-        error: `Couldn't check the input for ${tool.name}: ${messageOf(error)}`,
-      };
-    }
-    if (checked.issues !== undefined) {
-      return {
-        kind: 'invalid',
-        error: `Invalid input for ${tool.name}: ${issuesText(checked.issues)}`,
-      };
-    }
-    parsed = checked.value;
-  }
-  return { kind: 'ran', output: await tool.run(parsed, ctx) };
+  const checked = await checkInput(tool, input);
+  if (!checked.ok) return { kind: 'invalid', error: checked.error };
+  return { kind: 'ran', output: await tool.run(checked.value, ctx) };
 }
 
 /**

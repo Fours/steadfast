@@ -3,6 +3,7 @@
 // value, since Troupe journals events and snapshots state.
 
 import type { ActorRef } from '@kylewillett/troupe';
+import type { JsonValue } from '../json.js';
 import type { ModelResponse, ToolResult, Turn, Usage } from '../model.js';
 import type { AttemptFailed, StepError, StepTarget, ToolReturned } from '../steps/messages.js';
 
@@ -69,7 +70,72 @@ export type RunEvent =
       readonly target: StepTarget;
       readonly error: StepError;
     }
+  /**
+   * A call needs a person's approval, journaled with the response that made it, so the wait
+   * survives any restart (decision 0007). Tagged `steadfast.approval`.
+   */
+  | {
+      readonly type: 'approvalRequested';
+      /** The run it's in, so an inbox built on the tag can send `decide` to it. */
+      readonly runId: string;
+      readonly step: number;
+      readonly callId: string;
+      readonly tool: string;
+      /** The model's input, as it came. */
+      readonly input: JsonValue;
+      /** Wall-clock ms from the agent's clock, which a timeout is measured from. */
+      readonly requestedAt: number;
+      readonly timeoutMs?: number;
+    }
+  /** What became of a request: a person's decision, or a timeout. Tagged `steadfast.approval`. */
+  | {
+      readonly type: 'approvalDecided';
+      readonly step: number;
+      readonly callId: string;
+      readonly approved: boolean;
+      /** Who decided, as the caller said. `timeout` when nobody did in time. */
+      readonly by: string;
+      readonly note?: string;
+      /** Wall-clock ms from the agent's clock. */
+      readonly decidedAt: number;
+      readonly timedOut?: true;
+    }
   | { readonly type: 'runFinished'; readonly outcome: Outcome; readonly text: string };
+
+/** Where one of the current step's calls stands with its approval. */
+export interface Approval {
+  readonly status: 'waiting' | 'approved' | 'denied';
+  readonly requestedAt: number;
+  readonly timeoutMs?: number;
+}
+
+/** A call waiting for a person's decision, as `status` reports it. */
+export interface PendingApproval {
+  /** The run the call is in: give it to `decide`. */
+  readonly runId: string;
+  readonly step: number;
+  readonly callId: string;
+  readonly tool: string;
+  readonly input: JsonValue;
+  readonly requestedAt: number;
+  readonly timeoutMs?: number;
+}
+
+/** A sub-run: its agent's name and its run id. */
+export interface SubRun {
+  readonly agent: string;
+  readonly runId: string;
+}
+
+/** What `decide` replies with. */
+export type DecideReply =
+  | { readonly ok: true }
+  /**
+   * `notWaiting`: the call isn't waiting for a decision, because it was decided already, timed
+   * out, finished with its run, or was never asked about. `unknownRun`: no live run in this tree
+   * has the id.
+   */
+  | { readonly ok: false; readonly reason: 'notWaiting' | 'unknownRun' };
 
 /** A run's state: the fold of its events. */
 export interface RunState {
@@ -93,6 +159,8 @@ export interface RunState {
    * they join the transcript as one turn, in call order, and this empties.
    */
   readonly stepResults: readonly { readonly callId: string; readonly result: ToolResult }[];
+  /** The current step's approvals, by call id. Empty when nothing in the step needed one. */
+  readonly approvals: Readonly<Record<string, Approval>>;
   /** Failed attempts so far, keyed by {@link attemptKey}. */
   readonly attempts: Readonly<Record<string, number>>;
   readonly outcome?: Outcome;
@@ -106,6 +174,10 @@ export interface RunStatus {
   readonly usage: Usage;
   readonly treeUsage: Usage;
   readonly pending: Pending;
+  /** The run's own calls waiting for a decision. A sub-run's are in its own status. */
+  readonly approvals: readonly PendingApproval[];
+  /** The sub-runs working for the run now. */
+  readonly subRuns: readonly SubRun[];
   readonly outcome?: Outcome;
 }
 
@@ -155,11 +227,22 @@ export type RunProgress =
    */
   | { readonly type: 'resumed'; readonly runId: string; readonly seq: number };
 
+/**
+ * What the model-call child found about one of the response's calls that may need approval: that
+ * a person must be asked, or that its input failed the tool's `parse`, so it's an error result
+ * and nobody is asked. A call it says nothing about starts at once.
+ */
+export type ApprovalCheckResult =
+  | { readonly callId: string; readonly ask: true }
+  | { readonly callId: string; readonly invalid: string };
+
 /** The model's answer for a step, from the model-call child. */
 export interface ModelReplied {
   readonly type: 'modelReplied';
   readonly step: number;
   readonly response: ModelResponse;
+  /** What the child found about calls that may need approval. Missing when none might. */
+  readonly approvals?: readonly ApprovalCheckResult[];
 }
 
 /** The model call failed in a way that trying again won't fix. */
@@ -181,6 +264,23 @@ export type RunMsg =
   | { readonly type: 'status'; readonly replyTo: ActorRef<RunStatus> }
   /** Finishes the run with `cancelled`, and stops its children. A finished run ignores it. */
   | { readonly type: 'cancel'; readonly reason: string }
+  /**
+   * A person's decision on a call waiting for approval. Send it to the root: a run forwards it to
+   * the sub-run `runId` is in. The first decision wins (decision 0007).
+   */
+  | {
+      readonly type: 'decide';
+      /** The run the call is in, from the request. */
+      readonly runId: string;
+      readonly callId: string;
+      readonly approved: boolean;
+      /** Who decided, for the journal. */
+      readonly by: string;
+      readonly note?: string;
+      readonly replyTo?: ActorRef<DecideReply>;
+    }
+  /** A call's approval timer. */
+  | { readonly type: 'approvalTimedOut'; readonly step: number; readonly callId: string }
   /** Sent to itself when recovery finds no events, so starting is a command that persists. */
   | { readonly type: 'start' }
   /** The deadline timer, or a recovery that finds the deadline already past. */

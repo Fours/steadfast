@@ -21,8 +21,14 @@ const passThrough: StandardSchemaV1<unknown, string> = {
 describe('tool', () => {
   it('fills in the defaults: not idempotent, and a 60 s timeout', () => {
     const t = tool(valid);
-    expect(t).toMatchObject({ name: 'read_log', idempotent: false, timeoutMs: 60_000 });
+    expect(t).toMatchObject({
+      name: 'read_log',
+      idempotent: false,
+      timeoutMs: 60_000,
+      needsApproval: false,
+    });
     expect('parse' in t).toBe(false);
+    expect('approvalTimeoutMs' in t).toBe(false);
     expect(Object.isFrozen(t)).toBe(true);
   });
 
@@ -30,6 +36,20 @@ describe('tool', () => {
     const t = tool({ ...valid, idempotent: true, timeoutMs: 10_000, parse: passThrough });
     expect(t).toMatchObject({ idempotent: true, timeoutMs: 10_000, parse: passThrough });
     expect(t.input).toBe(valid.input);
+  });
+
+  it('keeps needsApproval and its timeout', () => {
+    const check = (input: { severity: string }) => input.severity === 'sev1';
+    expect(tool({ ...valid, needsApproval: true, approvalTimeoutMs: 30_000 })).toMatchObject({
+      needsApproval: true,
+      approvalTimeoutMs: 30_000,
+    });
+    const t = tool({
+      ...valid,
+      needsApproval: check,
+      run: (input: { severity: string }) => Promise.resolve(input.severity),
+    });
+    expect(t.needsApproval).toBe(check);
   });
 
   it('calls run with the definition as its this', async () => {
@@ -89,6 +109,18 @@ describe('tool', () => {
   });
 
   it.each([
+    ['an approvalTimeoutMs of 0', 0],
+    ['a fractional approvalTimeoutMs', 1.5],
+    ['an approvalTimeoutMs that is a string', '1000'],
+  ])('throws a RangeError on %s', (_, approvalTimeoutMs) => {
+    const def = withChanges({ needsApproval: true, approvalTimeoutMs });
+    expect(() => tool(def)).toThrow(RangeError);
+    expect(() => tool(def)).toThrow(
+      /^tool "read_log": approvalTimeoutMs must be a positive integer/,
+    );
+  });
+
+  it.each([
     ['a missing input', { input: undefined }, 'input must be a JSON Schema object'],
     ['an array input', { input: [] }, 'input must be a JSON Schema object'],
     [
@@ -105,6 +137,21 @@ describe('tool', () => {
     ['a parse with no validate', { parse: { '~standard': {} } }, 'parse must be a Standard Schema'],
     ['a parse that is a string', { parse: 'zod' }, 'parse must be a Standard Schema'],
     ['an idempotent that is not a boolean', { idempotent: 'yes' }, 'idempotent must be a boolean'],
+    [
+      'a needsApproval that is neither a boolean nor a function',
+      { needsApproval: 'yes' },
+      'needsApproval must be a boolean or a function, got "yes"',
+    ],
+    [
+      'an approvalTimeoutMs on a tool that never needs approval',
+      { approvalTimeoutMs: 1_000 },
+      'approvalTimeoutMs is only for a tool that needs approval',
+    ],
+    [
+      'an approvalTimeoutMs with needsApproval false',
+      { needsApproval: false, approvalTimeoutMs: 1_000 },
+      'approvalTimeoutMs is only for a tool that needs approval',
+    ],
     ['a missing run', { run: undefined }, 'run must be a function'],
     ['an unknown option, most likely a typo', { idempotant: true }, 'unknown option "idempotant"'],
   ])('throws a TypeError on %s', (_, changes, message) => {

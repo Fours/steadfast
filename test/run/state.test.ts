@@ -79,6 +79,7 @@ describe('onEvent', () => {
       treeUsage: { inputTokens: 0, outputTokens: 0 },
       pending: { kind: 'none' },
       stepResults: [],
+      approvals: {},
       attempts: {},
     });
     expect(first).toMatchObject({

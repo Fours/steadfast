@@ -16,7 +16,14 @@ export {
   type Turn,
   type Usage,
 } from './model.js';
-export { RetryableToolError, tool, type Tool, type ToolContext, type ToolDef } from './tool.js';
+export {
+  RetryableToolError,
+  tool,
+  type ApprovalCheck,
+  type Tool,
+  type ToolContext,
+  type ToolDef,
+} from './tool.js';
 export {
   agent,
   type Agent,
@@ -27,11 +34,15 @@ export {
 } from './agent.js';
 export { delegate, type DelegateOptions } from './delegate.js';
 export type {
+  Approval,
+  ApprovalCheckResult,
+  DecideReply,
   ModelCallReport,
   ModelFailed,
   ModelReplied,
   Outcome,
   Pending,
+  PendingApproval,
   RunEvent,
   RunLimits,
   RunMsg,
@@ -41,12 +52,15 @@ export type {
   RunStatus,
   StepError,
   StepTarget,
+  SubRun,
 } from './run/types.js';
+export { APPROVAL_TAG } from './run/approvals.js';
 export type { AttemptFailed, ToolCallReport, ToolReturned } from './steps/messages.js';
 export {
   readRun,
   type ReadRunOptions,
   type RunTimeline,
+  type TimelineApproval,
   type TimelineAttempt,
   type TimelineEvent,
   type TimelineStep,

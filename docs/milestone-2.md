@@ -137,7 +137,7 @@ const pageOncall = tool({
 ```
 
 - **`needsApproval`** is `true`, `false` (the default), or a function of the parsed input. A function runs once, when the response arrives, and what it said is journaled, so changing the code later doesn't change past runs. A function that throws counts as `true`, the safe answer. A call whose input fails `parse` is an error result at once, and nobody is asked.
-- **Asking is journaled** ([0007](decisions/0007-approvals-are-durable-waits-in-the-journal.md)). In the same write as the `modelResponded` that called the tool, the run journals `approvalRequested`, with the tool, its input, and `requestedAt` from the agent's clock. Calls in the same step that don't need approval start at once. The step's results still go to the model as one turn, once every call is done.
+- **Asking is journaled** ([0007](decisions/0007-approvals-are-durable-waits-in-the-journal.md)). In the same write as the `modelResponded` that called the tool, the run journals `approvalRequested`, with its run id, the tool, its input, and `requestedAt` from the agent's clock. Calls in the same step that don't need approval start at once. The step's results still go to the model as one turn, once every call is done.
 - **Deciding is a message:**
 
 ```ts
@@ -274,7 +274,7 @@ await run.decide({ runId, callId, approved: true, by: 'kyle' }); // DecideReply
 `RunEvent` gains:
 
 ```ts
-| { type: 'approvalRequested'; step: number; callId: string; tool: string; input: JsonValue; requestedAt: number; timeoutMs?: number }
+| { type: 'approvalRequested'; runId: string; step: number; callId: string; tool: string; input: JsonValue; requestedAt: number; timeoutMs?: number }
 | { type: 'approvalDecided'; step: number; callId: string; approved: boolean; by: string; note?: string; decidedAt: number; timedOut?: true }
 ```
 
@@ -283,7 +283,7 @@ and changes:
 - `runStarted` gains `limits`, the ones the run started with.
 - `toolFinished` gains `usage`, for a delegation's result.
 
-`RunState` gains `limits`, `treeUsage`, `approvals` (the current step's, by call id: waiting, approved or denied, with `requestedAt`), and `unfinished`. Snapshots go to version 2. An old journal still folds: `runStarted` without `limits` means none, and `toolFinished` without `usage` adds nothing.
+`RunState` gains `limits`, `treeUsage`, `approvals` (the current step's, by call id: waiting, approved or denied, with `requestedAt`), and `unfinished`. Snapshots go to version 3 (see the notes from T4). An old journal still folds: `runStarted` without `limits` means none, and `toolFinished` without `usage` adds nothing.
 
 ## Tasks
 
@@ -293,8 +293,8 @@ Do these in order. Each one ends with passing tests.
 | --- | --- | --- |
 | T1. Model calls v2: options, streamed text, `paused`, bad input | Done | 39977ab |
 | T2. Progress | Done | e31342e |
-| T3. Sub-agents and limits | Done | |
-| T4. Approvals | Not started | |
+| T3. Sub-agents and limits | Done | 5128d09 |
+| T4. Approvals | Done | |
 | T5. Cancellation across the tree | Not started | |
 | T6. Streaming and the fallback in the Anthropic adapter | Not started | |
 | T7. The OpenAI adapter | Not started | |
@@ -366,14 +366,24 @@ Notes from T3:
 
 **Done when** tests cover:
 
-- [ ] A call that needs approval doesn't start until it's approved, while the step's other calls run, and the step's results still go to the model as one turn.
-- [ ] A denial becomes an error result with who denied it and their note, and the tool never runs.
-- [ ] Stopping the system while a call waits, and spawning the run again, keeps waiting: no model call, no tool call, and the same approval in `status`. A decision sent to the new incarnation is honoured.
-- [ ] A timeout denies the call, measured from `requestedAt` on the agent's clock, across a restart.
-- [ ] The first decision wins. A second, or one for a call that isn't waiting, replies `notWaiting` and changes nothing.
-- [ ] A decision sent to the root for a sub-run's call reaches it. One for a run id with nothing under it replies `unknownRun`.
-- [ ] A `needsApproval` function is called once per call, and its answer is journaled: a run recovered with a different function behaves as it did.
-- [ ] A projection on `steadfast.approval` sees every request and decision, across two runs.
+- [x] A call that needs approval doesn't start until it's approved, while the step's other calls run, and the step's results still go to the model as one turn.
+- [x] A denial becomes an error result with who denied it and their note, and the tool never runs.
+- [x] Stopping the system while a call waits, and spawning the run again, keeps waiting: no model call, no tool call, and the same approval in `status`. A decision sent to the new incarnation is honoured.
+- [x] A timeout denies the call, measured from `requestedAt` on the agent's clock, across a restart.
+- [x] The first decision wins. A second, or one for a call that isn't waiting, replies `notWaiting` and changes nothing.
+- [x] A decision sent to the root for a sub-run's call reaches it. One for a run id with nothing under it replies `unknownRun`.
+- [x] A `needsApproval` function is called once per call, and its answer is journaled: a run recovered with a different function behaves as it did.
+- [x] A projection on `steadfast.approval` sees every request and decision, across two runs.
+
+Notes from T4:
+
+- The model-call child checks approvals, once the model has answered and before it reports, since `parse` may be async and a command can't await. The run never runs user code, and the response arrives with what it needs for one write.
+- `approvalRequested` carries `runId`. A projection only sees the stream id, `run-<agent>-<runId>`, which can't be split when agent names contain `-`, and an inbox needs the run id to send `decide`.
+- A timeout's `approvalDecided` has `by: 'timeout'`, so `by` stays required.
+- A delegation whose `task` isn't a string isn't asked about. It fails as `planSubRun` says, as before.
+- `approvalTimeoutMs` on a tool that never needs approval throws, since it can't be what was meant.
+- Snapshots are at version 3, not 2: T3 took 2, and `RunState` gained `approvals` here.
+- `status` gains `approvals`, the run's own waiting calls, and `subRuns`. `readRun` shows each call's approval, for T8's `--show`.
 
 ### T5. Cancellation across the tree
 
