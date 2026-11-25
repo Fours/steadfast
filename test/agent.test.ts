@@ -99,6 +99,7 @@ describe('agent()', () => {
       ['options that aren’t an object', 'r1', null, 'run options must be an object'],
       ['an input that isn’t a string', 'r1', { input: 5 }, 'input must be a string'],
       ['a reportTo that isn’t a ref', 'r1', { input: 'x', reportTo: {} }, 'reportTo must be'],
+      ['a progressTo that isn’t a ref', 'r1', { input: 'x', progressTo: 3 }, 'progressTo must be'],
       ['an unknown option', 'r1', { input: 'x', reportto: null }, 'unknown option "reportto"'],
     ])('throws on %s', (_name, runId, runOptions, message) => {
       expect(() => a.run(runId as string, runOptions as { input: string })).toThrow(TypeError);

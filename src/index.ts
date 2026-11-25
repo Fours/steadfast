@@ -33,6 +33,7 @@ export type {
   Pending,
   RunEvent,
   RunMsg,
+  RunProgress,
   RunReport,
   RunState,
   RunStatus,

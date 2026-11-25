@@ -5,7 +5,7 @@ import type { ActorDef, ActorRef } from '@kylewillett/troupe';
 import type { Persistence, PersistentState } from '@kylewillett/troupe/persistence';
 import type { Model } from './model.js';
 import { runActor } from './run/actor.js';
-import type { RunMsg, RunReport, RunState } from './run/types.js';
+import type { RunMsg, RunProgress, RunReport, RunState } from './run/types.js';
 import type { Tool } from './tool.js';
 
 /** Limits on one run. Every value is a positive integer. */
@@ -49,6 +49,11 @@ export interface RunOptions {
   readonly input: string;
   /** Told a {@link RunReport} when the run finishes, once per incarnation. */
   readonly reportTo?: ActorRef<RunReport>;
+  /**
+   * Told what the run is doing as it happens: each event once it's written, model text as it's
+   * generated, and where the run resumed. A slow or stopped listener never slows or breaks the run.
+   */
+  readonly progressTo?: ActorRef<RunProgress>;
 }
 
 /** A checked agent, made by {@link agent}. */
@@ -74,7 +79,7 @@ export interface Agent {
 const NAME = /^[a-zA-Z0-9_-]{1,64}$/;
 const KEYS = new Set(['name', 'model', 'system', 'tools', 'budget', 'persistence', 'clock']);
 const BUDGET_KEYS = new Set(['maxSteps', 'maxTokens', 'deadlineMs', 'maxAttemptsPerStep']);
-const RUN_KEYS = new Set(['input', 'reportTo']);
+const RUN_KEYS = new Set(['input', 'reportTo', 'progressTo']);
 /** Troupe's limit on a persistence id. */
 const MAX_ID_LENGTH = 255;
 
@@ -212,8 +217,10 @@ function checkRun(
   if (typeof options.input !== 'string') {
     throw new TypeError(`${where}: input must be a string, got ${describe(options.input)}`);
   }
-  const { reportTo } = options;
-  if (reportTo !== undefined && !(isObject(reportTo) && typeof reportTo.tell === 'function')) {
-    throw new TypeError(`${where}: reportTo must be an actor ref`);
+  for (const key of ['reportTo', 'progressTo'] as const) {
+    const ref = options[key];
+    if (ref !== undefined && !(isObject(ref) && typeof ref.tell === 'function')) {
+      throw new TypeError(`${where}: ${key} must be an actor ref`);
+    }
   }
 }

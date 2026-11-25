@@ -191,7 +191,7 @@ export type RunProgress =
   | { type: 'journaled'; runId: string; seq: number; event: RunEvent }
   /** Model text as it's generated. Not journaled: the response's text is, when it's whole. */
   | { type: 'text'; runId: string; step: number; attempt: number; text: string }
-  /** The run has recovered, at this seq. Anything earlier comes from readRun. */
+  /** The run has recovered, at this seq (0 for a new run). Anything earlier comes from readRun. */
   | { type: 'resumed'; runId: string; seq: number };
 ```
 
@@ -291,8 +291,8 @@ Do these in order. Each one ends with passing tests.
 
 | Task | Status | Commit |
 | --- | --- | --- |
-| T1. Model calls v2: options, streamed text, `paused`, bad input | Done | |
-| T2. Progress | Not started | |
+| T1. Model calls v2: options, streamed text, `paused`, bad input | Done | 39977ab |
+| T2. Progress | Done | |
 | T3. Sub-agents and limits | Not started | |
 | T4. Approvals | Not started | |
 | T5. Cancellation across the tree | Not started | |
@@ -319,14 +319,15 @@ Do these in order. Each one ends with passing tests.
 
 - `progressTo` on `RunOptions`, `RunProgress`, and telling it from `thenRun` with each event's `seq`
 - The model-call child tells `text` straight to `progressTo`, with its attempt number
-- `resumed` on every recovery
+- `resumed` on every recovery, including a new run's, at seq 0
+- Write [0009](decisions/0009-progress-is-told-to-a-ref.md), Proposed, and add it to the index
 
 **Done when** tests cover:
 
-- [ ] Every journaled event reaches `progressTo` once, in order, with the `seq` the journal gave it, including events persisted together in one write.
-- [ ] `text` pieces arrive before the `journaled` response they belong to, and a retried call's carry the next attempt number.
-- [ ] After a restart, `resumed` comes first with the recovered `seq`, and `readRun` up to it plus the progress after it gives every event exactly once.
-- [ ] A stopped `progressTo` doesn't change the run's journal or outcome.
+- [x] Every journaled event reaches `progressTo` once, in order, with the `seq` the journal gave it, including events persisted together in one write.
+- [x] `text` pieces arrive before the `journaled` response they belong to, and a retried call's carry the next attempt number.
+- [x] After a restart, `resumed` comes first with the recovered `seq`, and `readRun` up to it plus the progress after it gives every event exactly once.
+- [x] A stopped `progressTo` doesn't change the run's journal or outcome.
 
 ### T3. Sub-agents and limits
 
@@ -421,7 +422,7 @@ Do these in order. Each one ends with passing tests.
 - The example: the `log-analyst` sub-agent, approval for `page_oncall`, narration from progress, and the flags under "Outcome". `npm run example:check` runs every path in CI on the scripted model
 - `--show` prints the tree, each sub-run indented under the step that started it
 - The README: sub-agents, approvals and an inbox projection, cancellation, progress, streaming, the OpenAI adapter, `startRun`
-- Record 0009 for progress, and every record from this milestone Accepted with its evidence
+- Every record from this milestone Accepted with its evidence
 
 **Done when:**
 
@@ -449,7 +450,7 @@ This milestone adds:
 | 0006 | A sub-agent is a child run, with its own journal, so an interrupted one resumes rather than retrying or reporting "may have run" | T3 |
 | 0007 | Approvals are durable waits: the request and the decision are journaled events, and the wait is derived from state | T4 |
 | 0008 | Cancellation is journaled in every run of the tree, and a finished run closes its unfinished sub-runs on recovery | T5 |
-| 0009 | Progress is told to a ref captured by the run's definition: journaled events with their `seq`, and streamed text at most once | T2, written up in T8 |
+| 0009 | Progress is told to a ref captured by the run's definition: journaled events with their `seq`, and streamed text at most once | T2, Accepted in T8 |
 | 0010 | Adapters apply their provider's rules for resending a response, and the journal stays verbatim. Supersedes 0005 | T6 |
 | 0011 | The second adapter is OpenAI's Responses API, because it differs from Anthropic's where `Model` could have been shaped by it | T7 |
 

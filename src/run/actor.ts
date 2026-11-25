@@ -20,6 +20,7 @@ import {
   attemptKey,
   type RunEvent,
   type RunMsg,
+  type RunProgress,
   type RunReport,
   type RunState,
   type RunStatus,
@@ -79,7 +80,7 @@ export function runActor(
   runId: string,
   options: RunOptions,
 ): ActorDef<RunMsg, PersistentState<RunState>> {
-  const { input, reportTo } = options;
+  const { input, reportTo, progressTo } = options;
   const tools = new Map(agent.tools.map((t) => [t.name, t]));
   const specs: readonly ToolSpec[] = agent.tools.map((t) => ({
     name: t.name,
@@ -98,6 +99,11 @@ export function runActor(
       usage: state.usage,
     };
     reportTo.tell(message);
+  };
+
+  // `tell` never throws, so a listener that's slow or stopped can't hold up or break the run.
+  const progress = (message: RunProgress): void => {
+    progressTo?.tell(message);
   };
 
   /**
@@ -125,9 +131,21 @@ export function runActor(
         transcript: state.transcript,
         tools: specs,
       };
-      ctx.spawn(modelCall({ model: agent.model, request, step, replyTo: ctx.self }), name, {
-        supervision: STEP_BACKOFF,
+      // The child tells the text itself, so streaming never waits behind the run's mailbox.
+      const onText =
+        progressTo === undefined
+          ? undefined
+          : (text: string, attempt: number) => {
+              progress({ type: 'text', runId, step, attempt, text });
+            };
+      const child = modelCall({
+        model: agent.model,
+        request,
+        step,
+        replyTo: ctx.self,
+        ...(onText === undefined ? {} : { onText }),
       });
+      ctx.spawn(child, name, { supervision: STEP_BACKOFF });
       return;
     }
     if (pending.kind === 'tools') {
@@ -182,9 +200,23 @@ export function runActor(
     }
   };
 
+  /**
+   * Persists `events`, then tells `progressTo` each one with the `seq` the journal gave it. Every
+   * write goes through here, so each event is told exactly once, and only once it's written. The
+   * seqs are counted from `ctx.lastSeq`, which is where the journal stood when this command began.
+   */
+  const persist = (ctx: Ctx, ...events: RunEvent[]): Effect<RunEvent, RunState> => {
+    const from = ctx.lastSeq;
+    return ctx.persist(...events).thenRun(() => {
+      events.forEach((event, i) => {
+        progress({ type: 'journaled', runId, seq: from + i + 1, event });
+      });
+    });
+  };
+
   /** Persists `events`, then starts what the new state is waiting on. */
   const persistThenAct = (ctx: Ctx, ...events: RunEvent[]): Effect<RunEvent, RunState> =>
-    ctx.persist(...events).thenRun((state) => {
+    persist(ctx, ...events).thenRun((state) => {
       act(state, ctx);
     });
 
@@ -229,7 +261,7 @@ export function runActor(
         return ctx.reply(msg.replyTo, statusOf(state));
       case 'start':
         if (state.phase !== 'new') return ctx.none();
-        return ctx.persist(started()).thenRun((next) => {
+        return persist(ctx, started()).thenRun((next) => {
           if (armDeadline(next, ctx)) act(next, ctx);
         });
       case 'cancel': {
@@ -290,7 +322,7 @@ export function runActor(
           error: msg.error,
         };
         const count = (state.attempts[attemptKey(msg.step, target)] ?? 0) + 1;
-        if (!attemptsRunOut(agent.budget, count)) return ctx.persist(failed);
+        if (!attemptsRunOut(agent.budget, count)) return persist(ctx, failed);
         // Giving up is in the same write as the last attempt, so the journal never holds a count
         // that has run out with nothing to say what came of it.
         const tries = `failed ${String(count)} times. The last error: ${msg.error.message}`;
@@ -306,7 +338,7 @@ export function runActor(
         // The child is waiting out its backoff, to try again. It's stopped before the next state
         // acts, so a finished tool call can't be confused with one still running.
         const child = childFor(state, ctx, msg.step, target);
-        return ctx.persist(failed, givenUp).thenRun((next) => {
+        return persist(ctx, failed, givenUp).thenRun((next) => {
           if (child !== undefined) ctx.stop(child);
           act(next, ctx);
         });
@@ -322,6 +354,9 @@ export function runActor(
     onEvent,
     onSignal(state, signal, ctx) {
       if (signal.type !== 'recoveryCompleted') return;
+      // First, on every spawn, so a listener knows which events it will hear and which are in the
+      // journal already. A new run has recovered nothing, at seq 0.
+      progress({ type: 'resumed', runId, seq: signal.seq });
       // onSignal can't persist, so starting is a command the run sends itself. Anything sent
       // during recovery is ahead of it in the mailbox, and sees the phase as `new`.
       if (state.phase === 'new') {

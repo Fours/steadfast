@@ -91,6 +91,40 @@ export interface RunReport {
   readonly usage: Usage;
 }
 
+/**
+ * What a run tells its `progressTo` as it goes (decision 0009). Every message names the run it's
+ * from, since a tree's runs will share one ref.
+ */
+export type RunProgress =
+  /**
+   * An event, after it's written, with the `seq` the journal gave it. Each one is told once, in
+   * journal order, so a gap in a run's `seq`s means a message was lost, and `readRun` fills it.
+   */
+  | {
+      readonly type: 'journaled';
+      readonly runId: string;
+      readonly seq: number;
+      readonly event: RunEvent;
+    }
+  /**
+   * Model text as it's generated, for a preview. Never journaled or replayed: the response's text
+   * is journaled when it's whole. `attempt` starts at 1 and goes up when the call is tried again,
+   * so a listener can clear what a failed attempt showed.
+   */
+  | {
+      readonly type: 'text';
+      readonly runId: string;
+      readonly step: number;
+      readonly attempt: number;
+      readonly text: string;
+    }
+  /**
+   * The run has been spawned and has recovered its journal up to `seq`, 0 for a new run. Told
+   * first, on every spawn, so a listener knows where it joins. Events up to `seq` come from
+   * `readRun`.
+   */
+  | { readonly type: 'resumed'; readonly runId: string; readonly seq: number };
+
 /** The model's answer for a step, from the model-call child. */
 export interface ModelReplied {
   readonly type: 'modelReplied';

@@ -16,7 +16,10 @@ import {
   type ModelRequest,
   type ModelResponse,
   type Outcome,
+  type RunEvent,
   type RunMsg,
+  type RunOptions,
+  type RunProgress,
   type RunReport,
   type RunState,
   type RunStatus,
@@ -178,6 +181,43 @@ describe('types', () => {
       readonly text: string;
       readonly usage: { readonly inputTokens: number; readonly outputTokens: number };
     }>();
+  });
+
+  it('progressTo takes a ref that hears RunProgress, and narrowing on type gives its fields', () => {
+    const a = agent({
+      name: 'triage',
+      model: scriptedModel([]),
+      system: 's',
+      persistence: inMemoryPersistence(),
+    });
+    expectTypeOf<RunOptions['progressTo']>().toEqualTypeOf<ActorRef<RunProgress> | undefined>();
+
+    // Never called: these only have to type-check.
+    const calls = (host: ActorRef<RunProgress | RunReport>) => {
+      // One actor can hear a run's report and its progress, as a host or a UI would.
+      a.run('r1', { input: 'go', reportTo: host, progressTo: host });
+      // @ts-expect-error A ref for some other protocol can't hear progress.
+      a.run('r1', { input: 'go', progressTo: {} as ActorRef<string> });
+    };
+    expectTypeOf(calls).toBeFunction();
+
+    const narrow = (p: RunProgress) => {
+      switch (p.type) {
+        case 'journaled':
+          expectTypeOf(p.event).toEqualTypeOf<RunEvent>();
+          expectTypeOf(p.seq).toEqualTypeOf<number>();
+          break;
+        case 'text':
+          expectTypeOf(p.attempt).toEqualTypeOf<number>();
+          expectTypeOf(p.text).toEqualTypeOf<string>();
+          break;
+        case 'resumed':
+          expectTypeOf(p.seq).toEqualTypeOf<number>();
+          break;
+      }
+      expectTypeOf(p.runId).toEqualTypeOf<string>();
+    };
+    expectTypeOf(narrow).toBeFunction();
   });
 
   it('status takes a ref for RunStatus', () => {
