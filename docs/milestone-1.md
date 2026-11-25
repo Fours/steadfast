@@ -185,7 +185,7 @@ export type RunMsg =
 ```
 
 - `status` replies with the phase, the step, usage so far, and what the run is waiting on.
-- `cancel` finishes the run with outcome `cancelled` and stops its children, which aborts their signals. Milestone 2 makes cancellation cascade to sub-agents.
+- `cancel` finishes the run with outcome `cancelled` and the text `Cancelled: <reason>`, and stops its children, which aborts their signals. A run cancelled before it started journals `runStarted` and `runFinished` in one write, and never calls the model. A finished run ignores it. Milestone 2 makes cancellation cascade to sub-agents.
 - Internal messages carry their `step`, and the run ignores any for a step it's no longer on. A slow child of an old incarnation can't change a newer one's state.
 - `start` is how a fresh run persists `runStarted`. Troupe's `onSignal` can't persist, so on a `recoveryCompleted` with no events the run tells itself `start`. A command that arrived during recovery is ahead of it in the mailbox and sees the phase as `new`. Any other phase ignores `start`.
 - `modelFailed` is the model-call child's report of a failure that retrying won't fix. It finishes the run with `failed`.
@@ -295,9 +295,10 @@ A tool's failure goes back to the model, since the model can often work around i
 Checked by the run after each event that could exceed them:
 
 - **`maxSteps`:** after a response, if `step` has reached it and the response asks for tools, finish with `stepsExceeded` instead of running them.
-- **`maxTokens`:** after a response, if usage has reached it, finish with `tokensExceeded`.
+- **`maxTokens`:** after a response that asks for tools, if usage has reached it, finish with `tokensExceeded` instead of running them. Input and output tokens both count. If both budgets run out on the same response, `tokensExceeded` wins.
+- A response that doesn't ask for tools ends the run on its own terms, budget or not: a final answer that crosses `maxTokens` is still `completed`, since its stop reason says more about how the run ended.
 - **`deadlineMs`:** a timer, restarted on recovery for what's left ("Recovery"). When it fires, stop the children and finish with `deadlineExceeded`.
-- **`maxAttemptsPerStep`:** counted from journaled `attemptFailed` events, so a crash doesn't reset it.
+- **`maxAttemptsPerStep`:** counted from journaled `attemptFailed` events, so a crash doesn't reset it. The attempt that uses up the count is journaled in the same write as giving up (`runFinished` for a model call, `toolFinished` for a tool call), so the journal never holds a count that has run out with nothing to say what came of it.
 
 A finished run's `text` is the last response's text, or a sentence saying which budget ran out.
 
@@ -405,8 +406,8 @@ Do these in order. Each one ends with passing tests.
 | T1. Models, messages and the scripted model | Done | 00a11b9 |
 | T2. Tools and the tool-call child | Done | 25a34ae |
 | T3. The run: events, state and the loop | Done | 0746670 |
-| T4. Recovery and interrupted tools | Done | |
-| T5. Failures, retries and budgets | Not started | |
+| T4. Recovery and interrupted tools | Done | 9933cb5 |
+| T5. Failures, retries and budgets | Done | |
 | T6. The Anthropic adapter | Not started | |
 | T7. readRun, the example and the README | Not started | |
 
@@ -491,16 +492,17 @@ Do these in order. Each one ends with passing tests.
 
 - Every row of "Errors and retries", and every budget
 - Cancel
+- Troupe 0.3.2: `retryAfterMs` raises the step backoff through `minDelayFor` (open question 8)
 
 **Done when** tests cover:
 
-- [ ] A rate-limited model call is restarted with backoff, on virtual time, and `retryAfterMs` raises the delay. Each attempt is journaled.
-- [ ] Attempts are counted from the journal: a crash between attempts doesn't reset the count.
-- [ ] When attempts run out, a model call finishes the run with `failed`, and a tool call becomes an error result.
-- [ ] A model error that isn't retryable finishes the run with `failed`.
-- [ ] Each budget finishes the run with its outcome. The deadline holds across a restart, measured on the agent's clock.
-- [ ] `cancel` finishes the run with `cancelled`, aborts its children's signals, and nothing they report afterwards changes the state.
-- [ ] Unknown tools become error results that name the tools that exist.
+- [x] A rate-limited model call is restarted with backoff, on virtual time, and `retryAfterMs` raises the delay. Each attempt is journaled.
+- [x] Attempts are counted from the journal: a crash between attempts doesn't reset the count.
+- [x] When attempts run out, a model call finishes the run with `failed`, and a tool call becomes an error result.
+- [x] A model error that isn't retryable finishes the run with `failed`.
+- [x] Each budget finishes the run with its outcome. The deadline holds across a restart, measured on the agent's clock.
+- [x] `cancel` finishes the run with `cancelled`, aborts its children's signals, and nothing they report afterwards changes the state.
+- [x] Unknown tools become error results that name the tools that exist.
 
 ### T6. The Anthropic adapter
 
@@ -556,6 +558,8 @@ This milestone sets up records 0001 to 0005 in `docs/decisions/`, all Proposed. 
 6. **The refusal fallback is on by default.** It's what Anthropic recommends for Claude Opus 5.5. It changes which model may answer and how a declined request is billed, so the adapter's README must say so plainly.
 7. **Retrying a tool's failure vs reporting it.** This spec retries idempotent tools before telling the model. For some tools, such as a search that returns nothing, the model would do better hearing at once. Should a tool be able to opt out of retries?
 8. **`retryAfterMs` can't raise a backoff yet.** "Steps as children" says a `retryAfterMs` on a model error raises the restart delay for that attempt. Troupe's `restartWithBackoff` works the delay out from its own options and the restart count, and a failure can't add to it. T5 needs this for 429s with a `retry-after`. The fix belongs in Troupe, for example a failure that carries a minimum delay, which `decide` honours. Raise it there before T5 rather than working around it here.
+
+   **Status:** settled. Troupe 0.3.2 gives `restartWithBackoff` a `minDelayFor(failure)` option (Troupe's [0041](https://github.com/Fours/troupe/blob/main/docs/decisions/0041-a-failure-can-raise-its-backoff-delay.md)): a restart waits at least what it returns, uncapped by `maxMs`, with jitter on top. The step backoff reads the `retryAfterMs` of the `ModelError` a model-call child throws as its cause.
 9. **Settling while a tool runs.** Troupe's `settle`, and so `advance`, waits for every piped promise. A tool that only finishes when its timeout aborts it can't be reached that way, since the timeout needs time to pass. T2's tests drive `kit.scheduler` directly while such a tool runs, which works but is easy to get wrong. T3 to T5 need it more: tools running in parallel, a crash mid-tool, and deadlines. Troupe's 0010 solved the same problem for asks. A testkit option, or a way to mark a piped promise as settled by time, would solve it for steps.
 
    **Status:** T3 didn't need it. Its tools settle by themselves, and the tests that hold a tool open drive the scheduler with a bounded `drive` helper in `test/run/helpers.ts`. T4 (a crash mid-tool) and T5 (deadlines and timeouts) do need it. Raised with Troupe on 2026-11-24. Troupe's answer is `ctx.pipeToSelf(promise, map, { signal })` (Troupe's 0038): when the signal aborts, the pipe delivers the abort's reason at once, and a pipe with a signal isn't busy work for `settle` or `advance`. Released in Troupe 0.3.1. T4 bumps the peer dependency to `^0.3.1` and pipes both step children's calls with their signals.

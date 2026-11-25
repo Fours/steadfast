@@ -109,14 +109,18 @@ export interface ModelFailed {
 export type ModelCallReport = ModelReplied | ModelFailed | AttemptFailed;
 
 /**
- * The run's messages. `status` is for callers. The rest are internal, sent by the run itself and
- * by its children, and exported so the type is complete. Each internal message carries its step,
- * and the run ignores one for a step it's no longer on.
+ * The run's messages. `status` and `cancel` are for callers. The rest are internal, sent by the run
+ * itself, its children and its timers, and exported so the type is complete. Each message from a
+ * child carries its step, and the run ignores one for a step it's no longer on.
  */
 export type RunMsg =
   | { readonly type: 'status'; readonly replyTo: ActorRef<RunStatus> }
+  /** Finishes the run with `cancelled`, and stops its children. A finished run ignores it. */
+  | { readonly type: 'cancel'; readonly reason: string }
   /** Sent to itself when recovery finds no events, so starting is a command that persists. */
   | { readonly type: 'start' }
+  /** The deadline timer, or a recovery that finds the deadline already past. */
+  | { readonly type: 'deadline' }
   | ModelReplied
   | ModelFailed
   | ToolReturned

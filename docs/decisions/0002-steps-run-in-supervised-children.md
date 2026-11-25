@@ -1,6 +1,6 @@
 # 0002. Model and tool calls run in supervised child actors, and the run only persists their results
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-24
 - **Milestone:** 1
 
@@ -10,7 +10,7 @@ Model calls get rate-limited and time out, and tools fail in their own ways. Ret
 
 ## Decision
 
-The run never calls a model or a tool itself. For each piece of pending work, it spawns a child that does one call and stops. The parent supervises each child with `restartWithBackoff`. A child that hits a retryable failure first tells the parent, so the attempt is journaled, and then throws, so supervision restarts it after a delay. A failure that isn't retryable is reported without throwing, and the parent decides what it means. The run only persists results and failed attempts.
+The run never calls a model or a tool itself. For each piece of pending work, it spawns a child that does one call and stops. The parent supervises each child with `restartWithBackoff`. A child that hits a retryable failure first tells the parent, so the attempt is journaled, and then throws, so supervision restarts it after a delay. A model error's `retryAfterMs` raises that delay through backoff's `minDelayFor` (Troupe's [0041](https://github.com/Fours/troupe/blob/main/docs/decisions/0041-a-failure-can-raise-its-backoff-delay.md)), uncapped by `maxMs`. A failure that isn't retryable is reported without throwing, and the parent decides what it means. The run only persists results and failed attempts. It counts attempts from the journal, and when they run out it stops the child, in the same write as the last attempt: `runFinished` with `failed` for a model call, `toolFinished` with the error for a tool call.
 
 ## Alternatives considered
 
@@ -35,6 +35,15 @@ Proposed. T2 and T5 prove it: a rate-limited model call is restarted with backof
 - The model call is a child of its own, with the same shape as a tool call. A retryable `ModelError` is reported as `attemptFailed`, then thrown, and supervision calls again after a backoff. Anything else is reported as `modelFailed` without a restart.
 - A step's three tool calls run in three children at the same time. Each tool is held until all three have started, which couldn't happen if they ran one after another.
 - Messages for a step the run isn't on are ignored: late and early model answers, results for other steps, and calls the step didn't make.
+
+**T5 (2026-11-24):** `test/run/failures.test.ts`, `test/run/cancel.test.ts` and `test/steps/model-call.test.ts`:
+
+- A rate-limited model call is restarted with backoff on virtual time: no call before 1 s, the second between 1 and 1.2 s, the third 2 to 2.4 s after it. Each attempt is journaled as `attemptFailed`.
+- A `retryAfterMs` of 5 s holds the retry until at least 5 s, and one of 90 s isn't capped by the backoff's 60 s `maxMs`. Ignoring it fails both tests.
+- With `maxAttemptsPerStep: 3`, two attempts, a crash, and a new kit on the same journal leave exactly one attempt. The last attempt and `runFinished` are one append. Counting attempts in memory instead fails the test.
+- When a tool call's attempts run out, the model sees the last error, and the child, stopped while it waited out its backoff, never runs again while the step's other tool is still going. Not stopping it fails the test.
+- Every other row of "Errors and retries" is checked at the run: a tool that isn't idempotent runs once when it throws, comes back `interrupted` when it times out, and is retried when it throws `RetryableToolError`. An input that fails `parse` never reaches the tool.
+- `cancel` stops the children, which aborts a tool's and a model call's signals, and their late results change nothing.
 
 ## Consequences
 

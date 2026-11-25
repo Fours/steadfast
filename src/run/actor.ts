@@ -12,23 +12,38 @@ import {
 } from '@kylewillett/troupe/persistence';
 import type { Agent, RunOptions } from '../agent.js';
 import type { ModelRequest, ToolSpec } from '../model.js';
-import { modelCall } from '../steps/model-call.js';
+import { modelCall, retryAfterOf } from '../steps/model-call.js';
 import { mayHaveRun, toolCall } from '../steps/tool-call.js';
+import { afterResponse, attemptsRunOut, deadlinePassed, timeLeft, type Stop } from './budget.js';
 import { finalText, initialState, onEvent, outcomeOf, wantsTools } from './state.js';
-import type { RunEvent, RunMsg, RunReport, RunState, RunStatus } from './types.js';
+import {
+  attemptKey,
+  type RunEvent,
+  type RunMsg,
+  type RunReport,
+  type RunState,
+  type RunStatus,
+  type StepTarget,
+} from './types.js';
 
 type Ctx = PersistentContext<RunMsg, RunEvent, RunState>;
 
-/** Every step's children are restarted with this after a retryable failure (the spec's "Steps as children"). */
+/**
+ * Every step's children are restarted with this after a retryable failure (the spec's "Steps as
+ * children"). A model error's `retryAfterMs` raises the delay for that attempt.
+ */
 const STEP_BACKOFF = supervise.restartWithBackoff({
   minMs: 1_000,
   maxMs: 60_000,
   randomFactor: 0.2,
+  minDelayFor: retryAfterOf,
 });
 /** Snapshot every this many events. Bump the version whenever `RunState` changes shape. */
 const SNAPSHOTS = { every: 100, version: 1 } as const;
 /** What the model is told about a tool call that wasn't safe to run again (decision 0003). */
 export const INTERRUPTED = mayHaveRun('The tool was interrupted');
+/** The key of the run's one timer. */
+const DEADLINE = 'deadline';
 /** Troupe's actor name pattern, which a provider's call id must fit to name a child. */
 const ACTOR_NAME = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,63}$/;
 
@@ -93,6 +108,10 @@ export function runActor(
    */
   const act = (state: RunState, ctx: ActorContext<RunMsg>, resuming = false): void => {
     if (state.phase === 'finished') {
+      // Whatever ended the run, nothing it started is wanted any more. Stopping a child aborts its
+      // signal, and anything it reports afterwards is for a run that has finished, so it's ignored.
+      for (const child of ctx.children()) ctx.stop(child);
+      ctx.timers.cancel(DEADLINE);
       report(state);
       return;
     }
@@ -160,23 +179,69 @@ export function runActor(
       act(state, ctx);
     });
 
+  const finished = (stop: Stop): RunEvent => ({ type: 'runFinished', ...stop });
+
+  /**
+   * Starts the deadline timer for what's left of it, measured from the run's start on the agent's
+   * clock, so it holds across restarts. Returns false if it has already passed, having told the
+   * run so: onSignal can't persist, so finishing is a command like any other.
+   */
+  const armDeadline = (state: RunState, ctx: ActorContext<RunMsg>): boolean => {
+    const left = timeLeft(agent.budget, state.startedAt, agent.clock());
+    if (left === undefined) return true;
+    if (left === 0) {
+      ctx.self.tell({ type: 'deadline' });
+      return false;
+    }
+    ctx.timers.startSingle(DEADLINE, { type: 'deadline' }, left);
+    return true;
+  };
+
+  /** The child working on `target` of `step`, if it hasn't terminated. */
+  const childFor = (state: RunState, ctx: Ctx, step: number, target: StepTarget) => {
+    if (target.kind === 'model') return ctx.child(modelChildName(step));
+    const last = state.transcript.at(-1);
+    const calls = last?.role === 'assistant' ? last.response.toolCalls : [];
+    const index = calls.findIndex((c) => c.id === target.callId);
+    return ctx.child(toolChildName(step, target.callId, index));
+  };
+
+  const started = (): RunEvent => ({
+    type: 'runStarted',
+    agent: agent.name,
+    model: agent.model.name,
+    input,
+    startedAt: agent.clock(),
+  });
+
   const onCommand = (state: RunState, msg: RunMsg, ctx: Ctx): Effect<RunEvent, RunState> => {
     switch (msg.type) {
       case 'status':
         return ctx.reply(msg.replyTo, statusOf(state));
       case 'start':
         if (state.phase !== 'new') return ctx.none();
-        return persistThenAct(ctx, {
-          type: 'runStarted',
-          agent: agent.name,
-          model: agent.model.name,
-          input,
-          startedAt: agent.clock(),
+        return ctx.persist(started()).thenRun((next) => {
+          if (armDeadline(next, ctx)) act(next, ctx);
         });
+      case 'cancel': {
+        if (state.phase === 'finished') return ctx.none();
+        const cancelled = finished({ outcome: 'cancelled', text: `Cancelled: ${msg.reason}` });
+        // A run cancelled before it started still starts, so its journal says what was cancelled,
+        // but it never calls the model: both facts are one write.
+        if (state.phase === 'new') return persistThenAct(ctx, started(), cancelled);
+        return persistThenAct(ctx, cancelled);
+      }
+      case 'deadline':
+        if (state.phase !== 'running' || agent.budget.deadlineMs === undefined) return ctx.none();
+        return persistThenAct(ctx, finished(deadlinePassed(agent.budget.deadlineMs)));
       case 'modelReplied': {
         if (!awaitsModel(state, msg.step)) return ctx.none();
         const { response } = msg;
         const responded: RunEvent = { type: 'modelResponded', step: msg.step, response };
+        const usage = onEvent(state, responded).usage;
+        const stop = afterResponse(agent.budget, msg.step, usage, response);
+        // A budget that runs out ends the run instead of the tools it asked for, in the same write.
+        if (stop !== undefined) return persistThenAct(ctx, responded, finished(stop));
         if (wantsTools(response)) return persistThenAct(ctx, responded);
         // A response that asks for nothing ends the run, in the same write.
         return persistThenAct(ctx, responded, {
@@ -208,8 +273,34 @@ export function runActor(
             ? awaitsModel(state, msg.step)
             : awaitsTool(state, msg.step, target.callId);
         if (!current) return ctx.none();
-        // Journaled so the count survives a crash. T5 gives up when attempts run out.
-        return ctx.persist({ type: 'attemptFailed', step: msg.step, target, error: msg.error });
+        // Journaled so the count survives a crash, and counted from the journal for the same reason.
+        const failed: RunEvent = {
+          type: 'attemptFailed',
+          step: msg.step,
+          target,
+          error: msg.error,
+        };
+        const count = (state.attempts[attemptKey(msg.step, target)] ?? 0) + 1;
+        if (!attemptsRunOut(agent.budget, count)) return ctx.persist(failed);
+        // Giving up is in the same write as the last attempt, so the journal never holds a count
+        // that has run out with nothing to say what came of it.
+        const tries = `failed ${String(count)} times. The last error: ${msg.error.message}`;
+        const givenUp: RunEvent =
+          target.kind === 'model'
+            ? finished({ outcome: 'failed', text: `The model call ${tries}` })
+            : {
+                type: 'toolFinished',
+                step: msg.step,
+                callId: target.callId,
+                result: { ok: false, error: `The tool call ${tries}` },
+              };
+        // The child is waiting out its backoff, to try again. It's stopped before the next state
+        // acts, so a finished tool call can't be confused with one still running.
+        const child = childFor(state, ctx, msg.step, target);
+        return ctx.persist(failed, givenUp).thenRun((next) => {
+          if (child !== undefined) ctx.stop(child);
+          act(next, ctx);
+        });
       }
     }
   };
@@ -234,6 +325,8 @@ export function runActor(
           runId,
         });
       }
+      // A deadline that has passed while the run was down finishes it before anything starts.
+      if (state.phase === 'running' && !armDeadline(state, ctx)) return;
       // The same derivation as after any event. A finished run reports, and starts nothing.
       act(state, ctx, true);
     },

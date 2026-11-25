@@ -21,7 +21,7 @@ Troupe's records are in `../troupe/docs/decisions/`. Cite them as "Troupe's 0011
 | # | Decision | Status | Milestone |
 | --- | --- | --- | --- |
 | [0001](0001-a-run-is-a-persistent-actor.md) | A run is a persistent Troupe actor, and its journal is the run | Accepted | 1 |
-| [0002](0002-steps-run-in-supervised-children.md) | Model and tool calls run in supervised child actors, and the run only persists their results | Proposed | 1 |
+| [0002](0002-steps-run-in-supervised-children.md) | Model and tool calls run in supervised child actors, and the run only persists their results | Accepted | 1 |
 | [0003](0003-unfinished-steps-retry-only-when-safe.md) | An unfinished step is retried on recovery when it's safe to repeat, and reported to the model when it isn't | Accepted | 1 |
 | [0004](0004-built-on-troupe-with-no-other-dependencies.md) | Built on Troupe, with no other runtime dependencies: providers are adapters over structurally typed clients | Proposed | 1 |
 | [0005](0005-model-responses-are-journaled-verbatim.md) | Model responses are journaled verbatim, so runs replay without the model and providers get their own blocks back | Proposed | 1 |

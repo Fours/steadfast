@@ -31,6 +31,17 @@ export interface ModelCallState {
   readonly attempt: number;
 }
 
+/**
+ * The fewest ms a restart must wait after `failure`: the `retryAfterMs` of the model error this
+ * child threw, as its cause. For Troupe's `minDelayFor` (Troupe's 0041), so a provider that says
+ * how long to wait is waited for, even past the backoff's `maxMs`.
+ */
+export function retryAfterOf(failure: unknown): number | undefined {
+  return failure instanceof Error && failure.cause instanceof ModelError
+    ? failure.cause.retryAfterMs
+    : undefined;
+}
+
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }

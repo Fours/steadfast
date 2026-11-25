@@ -8,7 +8,7 @@ import {
   type ModelRequest,
   type ModelResponse,
 } from '../../src/index.ts';
-import { modelCall, type ModelCallMsg } from '../../src/steps/model-call.ts';
+import { modelCall, retryAfterOf, type ModelCallMsg } from '../../src/steps/model-call.ts';
 import { badRequest, rateLimited, say } from '../../src/testkit/index.ts';
 
 const backoff = supervise.restartWithBackoff({ minMs: 1_000, maxMs: 60_000, randomFactor: 0.2 });
@@ -172,5 +172,16 @@ describe('the model-call child', () => {
     expect(model.signals[0]?.aborted).toBe(true);
     parent.expectNoMessage();
     parent.expectTerminated(ref);
+  });
+});
+
+describe('retryAfterOf', () => {
+  it('reads the retryAfterMs of the model error a failure was thrown with, and nothing else', () => {
+    const thrown = (cause: unknown) => new Error('model (step 1): failed', { cause });
+    expect(retryAfterOf(thrown(rateLimited({ retryAfterMs: 2_000 })))).toBe(2_000);
+    expect(retryAfterOf(thrown(rateLimited()))).toBeUndefined();
+    expect(retryAfterOf(thrown(new Error('not a model error')))).toBeUndefined();
+    expect(retryAfterOf(rateLimited({ retryAfterMs: 2_000 }))).toBeUndefined();
+    expect(retryAfterOf('a string')).toBeUndefined();
   });
 });

@@ -57,11 +57,11 @@
     "coverage": "vitest run --coverage"
   },
   "peerDependencies": {
-    "@kylewillett/troupe": "^0.3.1"
+    "@kylewillett/troupe": "^0.3.2"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@kylewillett/troupe": "^0.3.1",
+    "@kylewillett/troupe": "^0.3.2",
     "@types/node": "^22.20.5",
     "@vitest/coverage-v8": "^4.1.12",
     "eslint": "^10.14.0",
