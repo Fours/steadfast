@@ -408,8 +408,8 @@ Do these in order. Each one ends with passing tests.
 | T3. The run: events, state and the loop | Done | 0746670 |
 | T4. Recovery and interrupted tools | Done | 9933cb5 |
 | T5. Failures, retries and budgets | Done | b64fea0 |
-| T6. The Anthropic adapter | Done | |
-| T7. readRun, the example and the README | Not started | |
+| T6. The Anthropic adapter | Done | 393bf66 |
+| T7. readRun, the example and the README | Done | |
 
 ### T0. Scaffold the repo
 
@@ -524,23 +524,24 @@ Do these in order. Each one ends with passing tests.
 - `examples/incident-triage/`: the demo described under "Outcome", on SQLite in `.steadfast/`, run by Node with type stripping against `dist/`
 - `npm run example`, and a CI step that runs it on the scripted model, crash and resume included
 - The README: quick start, tools, agents, runs and recovery, budgets, the adapter, the testkit
+- As built: `readRun` returns a `RunTimeline` of `TimelineEvent`s and `TimelineStep`s, each part carrying the `seq` that journaled it. It skips snapshots, so it's exact at any `upTo`. The example's flags are `--reset` (a finished run only reports again, so this starts a new one), `--crash-after N` (exit 137 once step N's response and every tool result are journaled, so the next run resumes at step N + 1), and `--crash-during page_oncall` (exit 137 inside the tool, after the page goes out and before its result is journaled). `npm run example:check` runs every path in CI. `tsconfig.json` maps the package's entry points to `src/` with `paths`, so the example type-checks before a build.
 
 **Done when:**
 
-- [ ] `readRun` at every sequence number of a recorded run gives the state the run had then, and calls no model.
-- [ ] `npm run example` runs to `completed` on the scripted model, and the crash-and-resume path ends the same way as an uninterrupted run.
-- [ ] `--show` prints the run's steps from the journal.
-- [ ] The README's examples type-check, in a test that compiles them.
+- [x] `readRun` at every sequence number of a recorded run gives the state the run had then, and calls no model.
+- [x] `npm run example` runs to `completed` on the scripted model, and the crash-and-resume path ends the same way as an uninterrupted run.
+- [x] `--show` prints the run's steps from the journal.
+- [x] The README's examples type-check, in a test that compiles them.
 
 ## Definition of done
 
-- [ ] T0 to T7 are complete.
-- [ ] `npm run lint`, `typecheck`, `test`, `coverage` and `build` all pass, locally and in CI.
-- [ ] Line coverage is at least 90% for `src/`.
-- [ ] There are no runtime dependencies besides the Troupe peer, and the adapter's SDK is an optional peer.
-- [ ] `src/` builds with no Node types and imports no Node built-ins.
-- [ ] The public API is exported only from the entry points' `index.ts` files.
-- [ ] Records 0001 to 0005 are Accepted, each with its evidence.
+- [x] T0 to T7 are complete.
+- [x] `npm run lint`, `typecheck`, `test`, `coverage` and `build` all pass, locally and in CI.
+- [x] Line coverage is at least 90% for `src/`.
+- [x] There are no runtime dependencies besides the Troupe peer, and the adapter's SDK is an optional peer.
+- [x] `src/` builds with no Node types and imports no Node built-ins.
+- [x] The public API is exported only from the entry points' `index.ts` files.
+- [x] Records 0001 to 0005 are Accepted, each with its evidence.
 
 ## Decision records
 
@@ -550,6 +551,8 @@ This milestone sets up records 0001 to 0005 in `docs/decisions/`, all Proposed. 
 
 1. **The first provider.** This spec assumes Anthropic's Messages API for the first adapter, since the example and the demo use Claude. Milestone 2 adds a second, to keep `Model` honest.
 2. **Awaiting a run.** Callers hear back through `reportTo`, which suits actors. Plain async code would rather `await` a promise. Should there be a helper, such as `runToCompletion(system, agent, runId, input)`, that spawns a small actor to wait? It could come in T7 if the example wants it.
+
+   **Status:** deferred to milestone 2. The example and the README wait with a small actor of their own, about ten lines. Milestone 2's progress events and cascading cancellation will shape what an awaitable run should look like, so the helper waits for them.
 3. **What Troupe exports.** Steadfast needs a JSON value type and its check, and `readRun` needs to read a stream from the journal and fold it. If Troupe's public API doesn't offer these, add them to Troupe (with a decision record there) rather than copying its internals.
 
    **Status:** settled for JSON. Troupe 0.3.0 exports `JsonValue`, `isJsonValue` and `jsonProblem` from its main entry (Troupe's [0037](https://github.com/Fours/troupe/blob/main/docs/decisions/0037-the-json-check-is-public.md)), and `src/json.ts` re-exports `JsonValue` and `jsonProblem` from there. Reading a stream for `readRun` needs nothing new: `Persistence`'s `journal.read(id, fromSeq, limit)` is public.

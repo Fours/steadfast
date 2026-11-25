@@ -1,6 +1,6 @@
 # 0005. Model responses are journaled verbatim, so runs replay without the model and providers get their own blocks back
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-24
 - **Milestone:** 1
 
@@ -35,6 +35,12 @@ T6 proves the adapter sends assistant turns back as `raw`, and T7 proves `readRu
 
 - `mapping.test.ts`: an assistant turn goes back as the very `raw` array the response kept, thinking blocks included, even when its `text` and `toolCalls` say something else.
 - `model.test.ts`: a run on `anthropicModel` over a fake client sends the first response's content, a thinking block included, back unchanged in the second request, and journals the same content as the response's `raw`.
+
+**T7 (2026-11-24):** `test/read-run.test.ts`, over a run with parallel tools, a tool retried after a failure, a rate-limited model call, and a crash while a tool that isn't idempotent was in flight, resumed in a second process:
+
+- At every sequence number from 0 to the end, `readRun(…, { upTo })` gives the same state as Troupe Backstage's `stateAt`, which folds the live run actor's own journal, and at the end it gives the actor's live state.
+- The agent `readRun` reads with has a model that throws if it's called, and it's never called.
+- `npm run example:check` shows the same from the outside: `--show` prints the whole incident-triage run from its SQLite journal with no model calls, and a run crashed after step 3 and resumed journals exactly what an uninterrupted run does.
 
 ## Consequences
 

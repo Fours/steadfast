@@ -39,3 +39,12 @@ export type {
   StepTarget,
 } from './run/types.js';
 export type { AttemptFailed, ToolCallReport, ToolReturned } from './steps/messages.js';
+export {
+  readRun,
+  type ReadRunOptions,
+  type RunTimeline,
+  type TimelineAttempt,
+  type TimelineEvent,
+  type TimelineStep,
+  type TimelineToolCall,
+} from './read-run.js';

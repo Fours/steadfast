@@ -21,7 +21,14 @@
     "types": ["node"],
     "noEmit": true,
     // Node runs examples/ by stripping types, which needs relative imports to end in .ts.
-    "allowImportingTsExtensions": true
+    "allowImportingTsExtensions": true,
+    // The examples import the package by name, which Node resolves to dist/. Type-checking reads
+    // src/ instead, so it passes before a build.
+    "paths": {
+      "@kylewillett/steadfast": ["./src/index.ts"],
+      "@kylewillett/steadfast/testkit": ["./src/testkit/index.ts"],
+      "@kylewillett/steadfast/anthropic": ["./src/anthropic/index.ts"]
+    }
   },
   "include": ["src", "test", "examples", "scripts", "*.config.ts"],
   // Node's types already declare these globals, and skipLibCheck would hide any clash, so the

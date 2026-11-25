@@ -58,7 +58,9 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "coverage": "vitest run --coverage"
+    "coverage": "vitest run --coverage",
+    "example": "npm run build --silent && node examples/incident-triage/main.ts",
+    "example:check": "node scripts/check-example.ts"
   },
   "peerDependencies": {
     "@anthropic-ai/sdk": "^1.14.0",

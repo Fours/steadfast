@@ -13,7 +13,7 @@ Steadfast is a runtime for durable AI agents in TypeScript, built on Troupe (`@k
 
 | # | Milestone | Status |
 | --- | --- | --- |
-| 1 | Durable agent runs: the run as a persistent actor, supervised steps, recovery, budgets, testkit | In progress — [spec](docs/milestone-1.md) |
+| 1 | Durable agent runs: the run as a persistent actor, supervised steps, recovery, budgets, testkit | Done — [spec](docs/milestone-1.md) |
 | 2 | Agent trees and people: sub-agents, approvals, cancellation, progress events | Not started |
 | 3 | Run inspector, demo site, first npm release | Not started |
 | 4 | Evals on replay: recorded runs, fault injection from a seed, an eval harness | Not started |
