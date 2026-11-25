@@ -15,7 +15,7 @@ import type { ModelRequest, ToolSpec } from '../model.js';
 import { modelCall, retryAfterOf } from '../steps/model-call.js';
 import { mayHaveRun, toolCall } from '../steps/tool-call.js';
 import { afterResponse, attemptsRunOut, deadlinePassed, timeLeft, type Stop } from './budget.js';
-import { finalText, initialState, onEvent, outcomeOf, wantsTools } from './state.js';
+import { continues, finalText, initialState, onEvent, outcomeOf } from './state.js';
 import {
   attemptKey,
   type RunEvent,
@@ -138,15 +138,24 @@ export function runActor(
         const name = toolChildName(state.step, call.id, index);
         if (ctx.child(name) !== undefined) return;
         const t = tools.get(call.name);
-        if (t === undefined) {
-          // Nothing to run, so the result is known now. It goes through the mailbox like any
-          // other, so it's journaled by the same command.
+        // Nothing to run, so the result is known now. It goes through the mailbox like any other,
+        // so it's journaled by the same command.
+        const known = (error: string): void => {
           ctx.self.tell({
             type: 'toolReturned',
             step: state.step,
             callId: call.id,
-            result: { ok: false, error: unknownTool(call.name, [...tools.keys()]) },
+            result: { ok: false, error },
           });
+        };
+        if (t === undefined) {
+          known(unknownTool(call.name, [...tools.keys()]));
+          return;
+        }
+        if (call.inputError !== undefined) {
+          // The adapter couldn't read the input, so there's nothing to run the tool with. Worded
+          // as a failed `parse` is, since to the model it's the same mistake.
+          known(`Invalid input for ${t.name}: ${call.inputError}`);
           return;
         }
         if (resuming && !t.idempotent) {
@@ -242,7 +251,7 @@ export function runActor(
         const stop = afterResponse(agent.budget, msg.step, usage, response);
         // A budget that runs out ends the run instead of the tools it asked for, in the same write.
         if (stop !== undefined) return persistThenAct(ctx, responded, finished(stop));
-        if (wantsTools(response)) return persistThenAct(ctx, responded);
+        if (continues(response)) return persistThenAct(ctx, responded);
         // A response that asks for nothing ends the run, in the same write.
         return persistThenAct(ctx, responded, {
           type: 'runFinished',

@@ -30,6 +30,8 @@ const STOP_REASONS: Readonly<Record<string, StopReason>> = {
   tool_use: 'toolUse',
   max_tokens: 'maxOutputTokens',
   refusal: 'refusal',
+  // A server tool's long turn, stopped to be resumed. The paused content goes back as it is.
+  pause_turn: 'paused',
 };
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -114,7 +116,7 @@ function toolCallOf(block: Record<string, unknown>): ToolCall {
  */
 export function fromMessage(message: AnthropicMessage): ModelResponse {
   const stop = message.stop_reason === null ? undefined : STOP_REASONS[message.stop_reason];
-  // stop_sequence, pause_turn and the rest come with features milestone 1 doesn't use.
+  // stop_sequence and the rest come with features Steadfast doesn't use yet.
   if (stop === undefined) fail(`unexpected stop reason ${JSON.stringify(message.stop_reason)}`);
   const problem = jsonProblem(message.content);
   if (problem !== undefined) fail(`the response's content isn't JSON: ${problem}`);

@@ -4,6 +4,7 @@ export { faultyModel, type Fault } from './faulty-model.js';
 export {
   callTool,
   callTools,
+  pause,
   say,
   type CallToolOptions,
   type CallToolsOptions,

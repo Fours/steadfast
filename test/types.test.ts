@@ -12,17 +12,21 @@ import {
   type Agent,
   type JsonValue,
   type Model,
+  type ModelCallOptions,
+  type ModelRequest,
   type ModelResponse,
   type Outcome,
   type RunMsg,
   type RunReport,
   type RunState,
   type RunStatus,
+  type StopReason,
   type Tool,
+  type ToolCall,
   type ToolContext,
   type ToolResult,
 } from '../src/index.ts';
-import { callTool, callTools, say, scriptedModel } from '../src/testkit/index.ts';
+import { callTool, callTools, pause, say, scriptedModel } from '../src/testkit/index.ts';
 
 function respond(response: ModelResponse): ModelResponse {
   return response;
@@ -33,6 +37,25 @@ function result(value: ToolResult): ToolResult {
 }
 
 describe('types', () => {
+  it('a model that ignores onText is still a Model', () => {
+    type NoOptions = { name: string; call(request: ModelRequest): Promise<ModelResponse> };
+    type SignalOnly = {
+      name: string;
+      call(request: ModelRequest, options: { signal: AbortSignal }): Promise<ModelResponse>;
+    };
+    expectTypeOf<NoOptions>().toExtend<Model>();
+    expectTypeOf<SignalOnly>().toExtend<Model>();
+    expectTypeOf<ModelCallOptions['onText']>().toEqualTypeOf<
+      ((text: string) => void) | undefined
+    >();
+  });
+
+  it('pause builds a ModelResponse, and paused is a StopReason', () => {
+    expectTypeOf(pause()).toEqualTypeOf<ModelResponse>();
+    expectTypeOf<'paused'>().toExtend<StopReason>();
+    expectTypeOf<ToolCall['inputError']>().toEqualTypeOf<string | undefined>();
+  });
+
   it('say, callTool and callTools build ModelResponses', () => {
     expectTypeOf(say('hi')).toEqualTypeOf<ModelResponse>();
     expectTypeOf(callTool('read_log', { lines: 5 })).toEqualTypeOf<ModelResponse>();

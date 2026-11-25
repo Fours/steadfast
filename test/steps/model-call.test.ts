@@ -4,12 +4,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   ModelError,
   type Model,
+  type ModelCallOptions,
   type ModelCallReport,
   type ModelRequest,
   type ModelResponse,
 } from '../../src/index.ts';
 import { modelCall, retryAfterOf, type ModelCallMsg } from '../../src/steps/model-call.ts';
-import { badRequest, rateLimited, say } from '../../src/testkit/index.ts';
+import { badRequest, rateLimited, say, scriptedModel } from '../../src/testkit/index.ts';
 
 const backoff = supervise.restartWithBackoff({ minMs: 1_000, maxMs: 60_000, randomFactor: 0.2 });
 const PAST_BACKOFF = 10_000;
@@ -39,7 +40,7 @@ function modelOf(
     name: 'test-model',
     signals,
     requests,
-    call(req, signal) {
+    call(req, { signal }) {
       signals.push(signal);
       requests.push(req);
       const answer = answers[signals.length - 1];
@@ -49,10 +50,14 @@ function modelOf(
   };
 }
 
-function start(model: Model): { parent: TestProbe<ModelCallReport>; ref: ActorRef<ModelCallMsg> } {
+function start(
+  model: Model,
+  onText?: (text: string, attempt: number) => void,
+): { parent: TestProbe<ModelCallReport>; ref: ActorRef<ModelCallMsg> } {
   const parent = kit.probe<ModelCallReport>('run');
+  const options = { model, request, step: 2, replyTo: parent.ref };
   const ref = kit.system.spawn(
-    modelCall({ model, request, step: 2, replyTo: parent.ref }),
+    modelCall(onText === undefined ? options : { ...options, onText }),
     'model-2',
     { supervision: backoff },
   );
@@ -172,6 +177,92 @@ describe('the model-call child', () => {
     expect(model.signals[0]?.aborted).toBe(true);
     parent.expectNoMessage();
     parent.expectTerminated(ref);
+  });
+});
+
+describe('streamed text', () => {
+  it('passes each piece on in order, with its attempt, and replies with the whole response', async () => {
+    const answer = say('The deploy at 14:02 broke checkout.');
+    const pieces: [string, number][] = [];
+    const { parent, ref } = start(scriptedModel([answer]), (text, attempt) => {
+      pieces.push([text, attempt]);
+    });
+    await kit.settle();
+    expect(pieces).toEqual([
+      ['The ', 1],
+      ['deploy ', 1],
+      ['at ', 1],
+      ['14:02 ', 1],
+      ['broke ', 1],
+      ['checkout.', 1],
+    ]);
+    // Only the whole response goes to the run, which journals it.
+    parent.expectMessage({ type: 'modelReplied', step: 2, response: answer });
+    parent.expectTerminated(ref);
+  });
+
+  it("numbers a retried call's pieces with the next attempt", async () => {
+    const answer = say('Second try.');
+    const model: Model = {
+      name: 'flaky',
+      async call(_req, { onText }) {
+        onText?.(calls === 0 ? 'Half an ' : 'Second try.');
+        calls += 1;
+        if (calls === 1) throw rateLimited();
+        return Promise.resolve(answer);
+      },
+    };
+    let calls = 0;
+    const pieces: [string, number][] = [];
+    const { parent } = start(model, (text, attempt) => {
+      pieces.push([text, attempt]);
+    });
+    await kit.advance(PAST_BACKOFF);
+    expect(pieces).toEqual([
+      ['Half an ', 1],
+      ['Second try.', 2],
+    ]);
+    parent.expectMessage((m) => m.type === 'attemptFailed');
+    parent.expectMessage({ type: 'modelReplied', step: 2, response: answer });
+  });
+
+  it("drops pieces a stopped attempt sends after it's aborted", async () => {
+    let late: ((text: string) => void) | undefined;
+    const model: Model = {
+      name: 'slow',
+      call(_req, { onText }) {
+        late = onText;
+        return new Promise<ModelResponse>(() => undefined);
+      },
+    };
+    const pieces: string[] = [];
+    const { ref } = start(model, (text) => {
+      pieces.push(text);
+    });
+    for (let i = 0; i < 20; i++) {
+      kit.scheduler.runReady();
+      await Promise.resolve();
+    }
+    late?.('before ');
+    kit.system.stop(ref);
+    await kit.settle();
+    late?.('after');
+    expect(pieces).toEqual(['before ']);
+  });
+
+  it('gives the model no onText when nobody listens', async () => {
+    let seen: ModelCallOptions | undefined;
+    const model: Model = {
+      name: 'quiet',
+      call(_req, options) {
+        seen = options;
+        return Promise.resolve(say('ok'));
+      },
+    };
+    start(model);
+    await kit.settle();
+    expect(seen).toBeDefined();
+    expect(seen && 'onText' in seen).toBe(false);
   });
 });
 

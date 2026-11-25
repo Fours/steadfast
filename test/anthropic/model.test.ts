@@ -24,7 +24,7 @@ describe('anthropicModel', () => {
     const model = anthropicModel({ client });
     expect(model.name).toBe('anthropic:claude-opus-5-5');
     const signal = new AbortController().signal;
-    await model.call(request, signal);
+    await model.call(request, { signal });
 
     expect(client.calls).toHaveLength(1);
     const [call] = client.calls;
@@ -45,7 +45,9 @@ describe('anthropicModel', () => {
 
   it('leaves out the beta and fallbacks when fallbacks is false, and still sends maxRetries 0', async () => {
     const client = fakeClient(message([]));
-    await anthropicModel({ client, fallbacks: false }).call(request, new AbortController().signal);
+    await anthropicModel({ client, fallbacks: false }).call(request, {
+      signal: new AbortController().signal,
+    });
     const [call] = client.calls;
     expect(call?.params).not.toHaveProperty('betas');
     expect(call?.params).not.toHaveProperty('fallbacks');
@@ -62,7 +64,7 @@ describe('anthropicModel', () => {
       thinking: { type: 'adaptive', display: 'summarized' },
     });
     expect(model.name).toBe('anthropic:claude-sonnet-5-5');
-    await model.call(request, new AbortController().signal);
+    await model.call(request, { signal: new AbortController().signal });
     expect(client.calls[0]?.params).toMatchObject({
       model: 'claude-sonnet-5-5',
       max_tokens: 4_096,
@@ -75,7 +77,9 @@ describe('anthropicModel', () => {
     const client = fakeClient(
       message([{ type: 'text', text: 'Declined.' }], 'refusal', { model: 'claude-opus-4-8' }),
     );
-    const response = await anthropicModel({ client }).call(request, new AbortController().signal);
+    const response = await anthropicModel({ client }).call(request, {
+      signal: new AbortController().signal,
+    });
     expect(response).toMatchObject({
       stop: 'refusal',
       text: 'Declined.',
@@ -91,17 +95,17 @@ describe('anthropicModel', () => {
     );
     const model = anthropicModel({ client });
     const signal = new AbortController().signal;
-    await expect(model.call(request, signal)).rejects.toMatchObject({
+    await expect(model.call(request, { signal })).rejects.toMatchObject({
       name: 'ModelError',
       retryable: true,
       retryAfterMs: 7_000,
     });
-    await expect(model.call(request, signal)).rejects.toMatchObject({ retryable: false });
+    await expect(model.call(request, { signal })).rejects.toMatchObject({ retryable: false });
   });
 
   it('throws an unexpected stop reason as a ModelError that is not retryable', async () => {
-    const client = fakeClient(message([], 'pause_turn'));
-    const call = anthropicModel({ client }).call(request, new AbortController().signal);
+    const client = fakeClient(message([], 'stop_sequence'));
+    const call = anthropicModel({ client }).call(request, { signal: new AbortController().signal });
     await expect(call).rejects.toBeInstanceOf(ModelError);
     await expect(call).rejects.toMatchObject({ retryable: false });
   });

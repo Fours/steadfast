@@ -65,6 +65,14 @@ export function say(text: string, options: ResponseOptions = {}): ModelResponse 
   return response('endTurn', text, [], options);
 }
 
+/**
+ * A response the provider paused, to be resumed, as Anthropic's `pause_turn` is. The run calls the
+ * model again with it at the end of the transcript.
+ */
+export function pause(text = '', options: ResponseOptions = {}): ModelResponse {
+  return response('paused', text, [], options);
+}
+
 /** A response that calls one tool. */
 export function callTool(
   name: string,

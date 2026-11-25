@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ModelRequest, ModelResponse, Turn } from '../../src/index.ts';
+import type { ModelCallOptions, ModelRequest, ModelResponse, Turn } from '../../src/index.ts';
 import {
   badRequest,
   callTool,
@@ -36,11 +36,11 @@ describe('faultyModel', () => {
     const inner = scriptedModel([say('one'), say('two'), say('three')]);
     const model = faultyModel(inner, { step: 2, fail: [limited, busy] });
 
-    expect(await outcome(model.call(requestFor(1), signal))).toEqual(say('one'));
-    expect(await outcome(model.call(requestFor(2), signal))).toBe(limited);
-    expect(await outcome(model.call(requestFor(2), signal))).toBe(busy);
-    expect(await outcome(model.call(requestFor(2), signal))).toEqual(say('two'));
-    expect(await outcome(model.call(requestFor(3), signal))).toEqual(say('three'));
+    expect(await outcome(model.call(requestFor(1), { signal }))).toEqual(say('one'));
+    expect(await outcome(model.call(requestFor(2), { signal }))).toBe(limited);
+    expect(await outcome(model.call(requestFor(2), { signal }))).toBe(busy);
+    expect(await outcome(model.call(requestFor(2), { signal }))).toEqual(say('two'));
+    expect(await outcome(model.call(requestFor(3), { signal }))).toEqual(say('three'));
 
     // The inner model sees only the calls that passed.
     expect(inner.requests).toEqual([requestFor(1), requestFor(2), requestFor(3)]);
@@ -54,26 +54,27 @@ describe('faultyModel', () => {
       { step: 1, fail: [first] },
       { step: 3, fail: [third] },
     ]);
-    expect(await outcome(model.call(requestFor(1), signal))).toBe(first);
-    expect(await outcome(model.call(requestFor(1), signal))).toEqual(say('one'));
-    expect(await outcome(model.call(requestFor(2), signal))).toEqual(say('two'));
-    expect(await outcome(model.call(requestFor(3), signal))).toBe(third);
-    expect(await outcome(model.call(requestFor(3), signal))).toEqual(say('three'));
+    expect(await outcome(model.call(requestFor(1), { signal }))).toBe(first);
+    expect(await outcome(model.call(requestFor(1), { signal }))).toEqual(say('one'));
+    expect(await outcome(model.call(requestFor(2), { signal }))).toEqual(say('two'));
+    expect(await outcome(model.call(requestFor(3), { signal }))).toBe(third);
+    expect(await outcome(model.call(requestFor(3), { signal }))).toEqual(say('three'));
   });
 
-  it('passes the signal through and keeps the inner model name', async () => {
-    let seen: AbortSignal | undefined;
+  it('passes the call options through and keeps the inner model name', async () => {
+    let seen: ModelCallOptions | undefined;
     const inner = {
       name: 'inner',
-      call: async (_req: ModelRequest, s: AbortSignal) => {
-        seen = s;
+      call: async (_req: ModelRequest, options: ModelCallOptions) => {
+        seen = options;
         return Promise.resolve(say('ok'));
       },
     };
     const model = faultyModel(inner, []);
     expect(model.name).toBe('inner');
-    await model.call(requestFor(1), signal);
-    expect(seen).toBe(signal);
+    const options = { signal, onText: () => undefined };
+    await model.call(requestFor(1), options);
+    expect(seen).toBe(options);
   });
 
   it('throws on a step that is not a positive integer, or given twice', () => {

@@ -40,13 +40,13 @@ export function faultyModel(inner: Model, faults: Fault | readonly Fault[]): Mod
   const attempts = new Map<number, number>();
   return {
     name: inner.name,
-    async call(request, signal) {
+    async call(request, options) {
       const step = stepOf(request);
       const attempt = attempts.get(step) ?? 0;
       attempts.set(step, attempt + 1);
       const error = byStep.get(step)?.[attempt];
       if (error !== undefined) throw error;
-      return inner.call(request, signal);
+      return inner.call(request, options);
     },
   };
 }

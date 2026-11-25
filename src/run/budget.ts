@@ -4,7 +4,7 @@
 import type { CheckedBudget } from '../agent.js';
 import type { ModelResponse, Usage } from '../model.js';
 import type { Outcome } from './types.js';
-import { wantsTools } from './state.js';
+import { continues } from './state.js';
 
 /** How a run ends early: its outcome, and the sentence it finishes with. */
 export interface Stop {
@@ -18,8 +18,9 @@ function total(usage: Usage): number {
 
 /**
  * Whether the response for `step`, with `usage` counted up to and including it, runs out a budget.
- * Only a response that asks for tools can: one that doesn't ends the run anyway, and its own stop
- * reason says more about how it ended than a budget would.
+ * Only a response the run would go on from can: one asking for tools, or a pause, which counts as
+ * a step like any other so a model that keeps pausing is bounded. One that ends the run ends it
+ * anyway, and its own stop reason says more about how it ended than a budget would.
  */
 export function afterResponse(
   budget: CheckedBudget,
@@ -27,7 +28,7 @@ export function afterResponse(
   usage: Usage,
   response: ModelResponse,
 ): Stop | undefined {
-  if (!wantsTools(response)) return undefined;
+  if (!continues(response)) return undefined;
   const used = total(usage);
   if (budget.maxTokens !== undefined && used >= budget.maxTokens) {
     return {

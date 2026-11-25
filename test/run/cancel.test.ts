@@ -3,7 +3,7 @@
 
 import { createTestKit, type TestKit } from '@kylewillett/troupe/testkit';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { JsonValue, ModelRequest, RunEvent } from '../../src/index.ts';
+import type { JsonValue, ModelCallOptions, ModelRequest, RunEvent } from '../../src/index.ts';
 import { callTool, say, scriptedModel } from '../../src/testkit/index.ts';
 import {
   deferred,
@@ -66,9 +66,9 @@ describe('cancel', () => {
     const model = {
       name: 'slow',
       requests: [] as ModelRequest[],
-      call(request: ModelRequest, s: AbortSignal) {
+      call(request: ModelRequest, options: ModelCallOptions) {
         model.requests.push(request);
-        signal = s;
+        signal = options.signal;
         return answer.promise;
       },
     };

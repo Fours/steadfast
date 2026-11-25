@@ -5,6 +5,7 @@ export {
   ModelError,
   type JsonSchemaObject,
   type Model,
+  type ModelCallOptions,
   type ModelErrorOptions,
   type ModelRequest,
   type ModelResponse,

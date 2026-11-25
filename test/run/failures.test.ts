@@ -54,9 +54,9 @@ function timed(kit: TestKit, inner: Model): Model & { readonly at: number[] } {
   return {
     name: inner.name,
     at,
-    call(request, signal) {
+    call(request, options) {
       at.push(kit.scheduler.now());
-      return inner.call(request, signal);
+      return inner.call(request, options);
     },
   };
 }

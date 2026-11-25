@@ -19,7 +19,13 @@ export interface ToolCall {
   /** The provider's id for the call. Unique within its response. */
   readonly id: string;
   readonly name: string;
+  /** The parsed input, or the provider's raw arguments when they couldn't be parsed. */
   readonly input: JsonValue;
+  /**
+   * Why the adapter couldn't read the input, such as arguments that aren't JSON. The run reports
+   * it to the model as the call's result, and never runs the tool.
+   */
+  readonly inputError?: string;
 }
 
 /**
@@ -37,8 +43,11 @@ export interface Usage {
   readonly outputTokens: number;
 }
 
-/** Why the model stopped. */
-export type StopReason = 'endTurn' | 'toolUse' | 'maxOutputTokens' | 'refusal';
+/**
+ * Why the model stopped. `paused` is a turn the provider stopped to be resumed, such as
+ * Anthropic's `pause_turn`: the run calls the model again with the transcript as it is.
+ */
+export type StopReason = 'endTurn' | 'toolUse' | 'maxOutputTokens' | 'refusal' | 'paused';
 
 /** One model response: Steadfast's reading of it, and the provider's own content in `raw`. */
 export interface ModelResponse {
@@ -72,15 +81,26 @@ export interface ModelRequest {
   readonly tools: readonly ToolSpec[];
 }
 
+/** What a model call is given besides the request. An object, so it can grow without breaking. */
+export interface ModelCallOptions {
+  /** Aborted on timeout, on cancel, and when the run stops. */
+  readonly signal: AbortSignal;
+  /**
+   * Called with each piece of visible text as it's generated, in order. A model that can't
+   * stream never calls it. Only the final response is journaled: this is a preview.
+   */
+  readonly onText?: (text: string) => void;
+}
+
 /** A model, behind a provider adapter or scripted for tests. */
 export interface Model {
   /** Recorded in `runStarted`, e.g. `'anthropic:claude-opus-5-5'`. */
   readonly name: string;
   /**
    * Answers one request. Every failure must be a {@link ModelError}, so the run never inspects a
-   * provider's error types. `signal` is aborted on timeout, on cancel, and when the run stops.
+   * provider's error types.
    */
-  call(request: ModelRequest, signal: AbortSignal): Promise<ModelResponse>;
+  call(request: ModelRequest, options: ModelCallOptions): Promise<ModelResponse>;
 }
 
 /** A bad option's value for an error message: a number as itself, anything else by its type. */

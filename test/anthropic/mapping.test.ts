@@ -203,11 +203,36 @@ describe('fromMessage', () => {
     ['tool_use', 'toolUse'],
     ['max_tokens', 'maxOutputTokens'],
     ['refusal', 'refusal'],
+    ['pause_turn', 'paused'],
   ])('maps stop reason %s to %s', (from, to) => {
     expect(fromMessage(message([], from)).stop).toBe(to);
   });
 
-  it.each(['stop_sequence', 'pause_turn', 'compaction', 'model_context_window_exceeded', null])(
+  it('reads a paused turn as paused, and sends it back as the last message, verbatim', () => {
+    const paused = [
+      { type: 'server_tool_use', id: 'srvtoolu_1', name: 'web_search', input: { query: 'x' } },
+      { type: 'text', text: 'Still searching.' },
+    ];
+    const response = fromMessage(message(paused, 'pause_turn'));
+    expect(response.stop).toBe('paused');
+    expect(response.raw).toEqual(paused);
+    expect(response.toolCalls).toEqual([]);
+    const params = toParams(
+      {
+        system: '',
+        transcript: [
+          { role: 'user', text: 'Search.' },
+          { role: 'assistant', response },
+        ],
+        tools: [],
+      },
+      settings,
+    );
+    // Nothing follows it: the API resumes from the paused content itself.
+    expect(params.messages.at(-1)).toEqual({ role: 'assistant', content: paused });
+  });
+
+  it.each(['stop_sequence', 'compaction', 'model_context_window_exceeded', null])(
     'makes stop reason %s a ModelError that is not retryable',
     (stop) => {
       const read = () => fromMessage(message([], stop));

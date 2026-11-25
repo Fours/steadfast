@@ -24,6 +24,14 @@ export function wantsTools(response: ModelResponse): boolean {
   return response.stop === 'toolUse' && response.toolCalls.length > 0;
 }
 
+/**
+ * Whether the run goes on after a response: to its tool calls, or to the model again after a
+ * pause. A response that does neither ends the run.
+ */
+export function continues(response: ModelResponse): boolean {
+  return wantsTools(response) || response.stop === 'paused';
+}
+
 /** How a run ends on a response that doesn't ask for tools. */
 export function outcomeOf(stop: StopReason): Outcome {
   switch (stop) {
@@ -35,6 +43,9 @@ export function outcomeOf(stop: StopReason): Outcome {
       return 'refused';
     case 'toolUse':
       // `toolUse` with no tool calls: the model said it would call something, and didn't.
+      return 'failed';
+    case 'paused':
+      // Never asked: a paused response continues the run. Here so the switch stays exhaustive.
       return 'failed';
   }
 }
@@ -67,9 +78,14 @@ export function onEvent(state: RunState, event: RunEvent): RunState {
           inputTokens: state.usage.inputTokens + response.usage.inputTokens,
           outputTokens: state.usage.outputTokens + response.usage.outputTokens,
         },
-        pending: wantsTools(response)
-          ? { kind: 'tools', callIds: response.toolCalls.map((c) => c.id) }
-          : { kind: 'none' },
+        // A paused turn goes straight back to the model, with nothing added: the provider resumes
+        // from the response itself. Its stop reason wins over any tool calls in it.
+        pending:
+          response.stop === 'paused'
+            ? { kind: 'model' }
+            : wantsTools(response)
+              ? { kind: 'tools', callIds: response.toolCalls.map((c) => c.id) }
+              : { kind: 'none' },
         stepResults: [],
       };
     }

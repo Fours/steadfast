@@ -120,7 +120,8 @@ export function anthropicModel(options: AnthropicModelOptions): Model {
   const { client, settings } = settingsOf(options);
   return Object.freeze({
     name: `anthropic:${settings.model}`,
-    async call(request, signal) {
+    // Not streaming yet, so onText is never called (milestone 2's T6 streams).
+    async call(request, { signal }) {
       const params = toParams(request, settings);
       let message;
       try {

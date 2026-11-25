@@ -10,12 +10,14 @@ import { ModelError, type Model, type ModelRequest, type ModelResponse } from '.
 import type { ModelCallReport } from '../run/types.js';
 
 /** Everything one model call needs. */
-export interface ModelCallOptions {
+export interface ModelCallChildOptions {
   readonly model: Model;
   readonly request: ModelRequest;
   /** The step this call answers: one more than the steps answered so far. */
   readonly step: number;
   readonly replyTo: ActorRef<ModelCallReport>;
+  /** Given each piece of streamed text, with the attempt it belongs to, from 1. */
+  readonly onText?: (text: string, attempt: number) => void;
 }
 
 /** The child's own message, from its `pipeToSelf`. */
@@ -50,8 +52,8 @@ function messageOf(error: unknown): string {
  * The actor definition for one model call. Spawn it under the run, supervised with
  * `restartWithBackoff`.
  */
-export function modelCall(options: ModelCallOptions): ActorDef<ModelCallMsg, ModelCallState> {
-  const { model, request, step, replyTo } = options;
+export function modelCall(options: ModelCallChildOptions): ActorDef<ModelCallMsg, ModelCallState> {
+  const { model, request, step, replyTo, onText } = options;
   // Per incarnation, and not in state, since a controller isn't a plain value (Troupe's 0001).
   let attempts = 0;
   let controller = new AbortController();
@@ -63,7 +65,18 @@ export function modelCall(options: ModelCallOptions): ActorDef<ModelCallMsg, Mod
       const n = attempts;
       const { signal } = controller;
       // `call` may throw before it returns a promise. That's a failed call like any other.
-      const call = (async () => model.call(request, signal))();
+      // The attempt goes with each piece, so a listener can drop what a failed attempt streamed.
+      const callOptions =
+        onText === undefined
+          ? { signal }
+          : {
+              signal,
+              onText: (text: string) => {
+                // A stopped attempt's late pieces aren't wanted.
+                if (!signal.aborted) onText(text, n);
+              },
+            };
+      const call = (async () => model.call(request, callOptions))();
       // With the signal, the pipe ends when the attempt is stopped, whatever the model does, and
       // the testkit doesn't wait on it as busy work (Troupe's 0038).
       ctx.pipeToSelf(call, (result) => ({ type: 'settled', attempt: n, result }), { signal });

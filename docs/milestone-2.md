@@ -291,7 +291,7 @@ Do these in order. Each one ends with passing tests.
 
 | Task | Status | Commit |
 | --- | --- | --- |
-| T1. Model calls v2: options, streamed text, `paused`, bad input | Not started | |
+| T1. Model calls v2: options, streamed text, `paused`, bad input | Done | |
 | T2. Progress | Not started | |
 | T3. Sub-agents and limits | Not started | |
 | T4. Approvals | Not started | |
@@ -309,11 +309,11 @@ Do these in order. Each one ends with passing tests.
 
 **Done when** tests cover:
 
-- [ ] A model that calls `onText` streams its pieces in order, and the journaled response is the whole one.
-- [ ] A `paused` response calls the model again with the same transcript plus the response, adding no user turn, and counts as a step against `maxSteps`.
-- [ ] A tool call with an `inputError` becomes an error result, and the tool never runs.
-- [ ] `pause_turn` maps to `paused`.
-- [ ] Type test: a model that ignores `onText` is still a `Model`.
+- [x] A model that calls `onText` streams its pieces in order, and the journaled response is the whole one.
+- [x] A `paused` response calls the model again with the same transcript plus the response, adding no user turn, and counts as a step against `maxSteps`.
+- [x] A tool call with an `inputError` becomes an error result, and the tool never runs.
+- [x] `pause_turn` maps to `paused`.
+- [x] Type test: a model that ignores `onText` is still a `Model`.
 
 ### T2. Progress
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ModelError, type ModelRequest } from '../../src/index.ts';
-import { callTool, callTools, say, scriptedModel } from '../../src/testkit/index.ts';
+import { callTool, callTools, pause, say, scriptedModel } from '../../src/testkit/index.ts';
 
 const signal = new AbortController().signal;
 
@@ -13,16 +13,16 @@ describe('scriptedModel', () => {
     const first = callTool('read_log', { service: 'checkout', lines: 50 });
     const second = say('The cause is a bad deploy.');
     const model = scriptedModel([first, second]);
-    expect(await model.call(request('a'), signal)).toBe(first);
-    expect(await model.call(request('b'), signal)).toBe(second);
+    expect(await model.call(request('a'), { signal })).toBe(first);
+    expect(await model.call(request('b'), { signal })).toBe(second);
   });
 
   it('records every request in order', async () => {
     const model = scriptedModel([say('one'), say('two')]);
     const a = request('a');
     const b = request('b');
-    await model.call(a, signal);
-    await model.call(b, signal);
+    await model.call(a, { signal });
+    await model.call(b, { signal });
     expect(model.requests).toEqual([a, b]);
     expect(model.requests[0]).toBe(a);
   });
@@ -33,15 +33,15 @@ describe('scriptedModel', () => {
       (req, call) => say(`call ${String(call)} saw ${String(req.transcript.length)} turn`),
       async () => Promise.resolve(say('async')),
     ]);
-    await model.call(request('a'), signal);
-    expect((await model.call(request('b'), signal)).text).toBe('call 2 saw 1 turn');
-    expect((await model.call(request('c'), signal)).text).toBe('async');
+    await model.call(request('a'), { signal });
+    expect((await model.call(request('b'), { signal })).text).toBe('call 2 saw 1 turn');
+    expect((await model.call(request('c'), { signal })).text).toBe('async');
   });
 
   it('throws a ModelError that is not retryable past the end of its script, and records the call', async () => {
     const model = scriptedModel([say('only')]);
-    await model.call(request('a'), signal);
-    const error: unknown = await model.call(request('b'), signal).catch((e: unknown) => e);
+    await model.call(request('a'), { signal });
+    const error: unknown = await model.call(request('b'), { signal }).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ModelError);
     expect((error as ModelError).retryable).toBe(false);
     expect((error as ModelError).message).toBe(
@@ -54,7 +54,7 @@ describe('scriptedModel', () => {
     const script = [say('kept')];
     const model = scriptedModel(script);
     script.length = 0;
-    expect((await model.call(request('a'), signal)).text).toBe('kept');
+    expect((await model.call(request('a'), { signal })).text).toBe('kept');
   });
 
   it('is named scripted unless given a name', () => {
@@ -115,5 +115,47 @@ describe('responses', () => {
         { name: 'b', input: 2, id: 'x' },
       ]),
     ).toThrow(/unique/);
+  });
+
+  it("streams each response's text a word at a time, in order, before it answers", async () => {
+    const text = '  Two  spaces,\na newline, and a tail. ';
+    const model = scriptedModel([say(text), async () => Promise.resolve(say('from a function'))]);
+    const pieces: string[] = [];
+    const onText = (piece: string) => {
+      pieces.push(piece);
+    };
+    const first = await model.call(request('a'), { signal, onText });
+    expect(pieces).toEqual(['  Two  ', 'spaces,\n', 'a ', 'newline, ', 'and ', 'a ', 'tail. ']);
+    // The pieces are the text, exactly, and the response is whole.
+    expect(pieces.join('')).toBe(text);
+    expect(first.text).toBe(text);
+    pieces.length = 0;
+    await model.call(request('b'), { signal, onText });
+    expect(pieces).toEqual(['from ', 'a ', 'function']);
+  });
+
+  it('streams nothing for a response with no text', async () => {
+    const model = scriptedModel([callTool('read_log', {}), pause()]);
+    const pieces: string[] = [];
+    const onText = (piece: string) => {
+      pieces.push(piece);
+    };
+    await model.call(request('a'), { signal, onText });
+    await model.call(request('b'), { signal, onText });
+    expect(pieces).toEqual([]);
+  });
+});
+
+describe('pause', () => {
+  it('builds a paused response with no tool calls', () => {
+    const paused = pause('Searching.', { usage: { inputTokens: 3, outputTokens: 4 } });
+    expect(paused).toMatchObject({
+      stop: 'paused',
+      text: 'Searching.',
+      toolCalls: [],
+      usage: { inputTokens: 3, outputTokens: 4 },
+      model: 'scripted',
+    });
+    expect(pause().text).toBe('');
   });
 });
