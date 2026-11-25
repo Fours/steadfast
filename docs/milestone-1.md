@@ -404,8 +404,8 @@ Do these in order. Each one ends with passing tests.
 | T0. Scaffold the repo | Done | 8204533 |
 | T1. Models, messages and the scripted model | Done | 00a11b9 |
 | T2. Tools and the tool-call child | Done | 25a34ae |
-| T3. The run: events, state and the loop | Done | |
-| T4. Recovery and interrupted tools | Not started | |
+| T3. The run: events, state and the loop | Done | 0746670 |
+| T4. Recovery and interrupted tools | Done | |
 | T5. Failures, retries and budgets | Not started | |
 | T6. The Anthropic adapter | Not started | |
 | T7. readRun, the example and the README | Not started | |
@@ -475,15 +475,17 @@ Do these in order. Each one ends with passing tests.
 - Recovery on `recoveryCompleted`, for each case in "Recovery"
 - Interrupted tools, both kinds
 - Spawning a finished run reports at once
+- Troupe 0.3.1: both step children pipe their calls with their abort signals (open question 9)
+- Not here: recovering a deadline (case 5 of "Recovery"). It belongs with the deadline budget, so T5 does it, and proves it with "The deadline holds across a restart".
 
 **Done when** tests cover:
 
-- [ ] Stopping the system after any event and spawning the run again on the same journal resumes it, and the run ends as it would have with no stop. Checked after every event of a five-step run, with the scripted model's requests compared.
-- [ ] An interrupted idempotent tool runs again with the same idempotency key.
-- [ ] An interrupted non-idempotent tool doesn't run again, and the model sees the interrupted error.
-- [ ] A finished run reports again when it's spawned, and calls nothing.
-- [ ] A different `input` on resume is ignored, with a warning.
-- [ ] Recovery from a snapshot gives the same state as recovery from every event.
+- [x] Stopping the system after any event and spawning the run again on the same journal resumes it, and the run ends as it would have with no stop. Checked after every event of a five-step run, with the scripted model's requests compared.
+- [x] An interrupted idempotent tool runs again with the same idempotency key.
+- [x] An interrupted non-idempotent tool doesn't run again, and the model sees the interrupted error.
+- [x] A finished run reports again when it's spawned, and calls nothing.
+- [x] A different `input` on resume is ignored, with a warning.
+- [x] Recovery from a snapshot gives the same state as recovery from every event.
 
 ### T5. Failures, retries and budgets
 
@@ -556,4 +558,6 @@ This milestone sets up records 0001 to 0005 in `docs/decisions/`, all Proposed. 
 8. **`retryAfterMs` can't raise a backoff yet.** "Steps as children" says a `retryAfterMs` on a model error raises the restart delay for that attempt. Troupe's `restartWithBackoff` works the delay out from its own options and the restart count, and a failure can't add to it. T5 needs this for 429s with a `retry-after`. The fix belongs in Troupe, for example a failure that carries a minimum delay, which `decide` honours. Raise it there before T5 rather than working around it here.
 9. **Settling while a tool runs.** Troupe's `settle`, and so `advance`, waits for every piped promise. A tool that only finishes when its timeout aborts it can't be reached that way, since the timeout needs time to pass. T2's tests drive `kit.scheduler` directly while such a tool runs, which works but is easy to get wrong. T3 to T5 need it more: tools running in parallel, a crash mid-tool, and deadlines. Troupe's 0010 solved the same problem for asks. A testkit option, or a way to mark a piped promise as settled by time, would solve it for steps.
 
-   **Status:** T3 didn't need it. Its tools settle by themselves, and the tests that hold a tool open drive the scheduler with a bounded `drive` helper in `test/run/helpers.ts`. T4 (a crash mid-tool) and T5 (deadlines and timeouts) do need it, so raise it in Troupe before T4.
+   **Status:** T3 didn't need it. Its tools settle by themselves, and the tests that hold a tool open drive the scheduler with a bounded `drive` helper in `test/run/helpers.ts`. T4 (a crash mid-tool) and T5 (deadlines and timeouts) do need it. Raised with Troupe on 2026-11-24. Troupe's answer is `ctx.pipeToSelf(promise, map, { signal })` (Troupe's 0038): when the signal aborts, the pipe delivers the abort's reason at once, and a pipe with a signal isn't busy work for `settle` or `advance`. Released in Troupe 0.3.1. T4 bumps the peer dependency to `^0.3.1` and pipes both step children's calls with their signals.
+
+   **Settled in T4.** The recovery tests shut a kit down while a tool that never settles is in flight, and `settle` and `shutdown` both return. The model-call child now numbers its attempts, as the tool-call child does, so an aborted call's result can't reach a restarted child. The `drive` helper still backs T3's tests, which hold tools open on purpose. T5 can move them to `settle` and `advance` as it touches them.

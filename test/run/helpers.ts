@@ -51,6 +51,40 @@ export function recordedPersistence(clock: () => number, snapshots = true): Reco
   return { persistence, appends };
 }
 
+/**
+ * A process that dies once `limit` events are stored. An append past it rejects and writes
+ * nothing, so the run stops (its supervision is the default, stop) with the journal holding
+ * exactly what a crash would have left. An append can't be split, so one that straddles the limit
+ * leaves the journal short of it.
+ */
+export function crashAfter(base: Persistence, limit: number): Persistence {
+  const journal: Journal = {
+    append(id, expectedSeq, events) {
+      if (expectedSeq + events.length > limit) {
+        return Promise.reject(new Error(`crashed after ${String(limit)} events`));
+      }
+      return base.journal.append(id, expectedSeq, events);
+    },
+    read: (id, fromSeq, limit_) => base.journal.read(id, fromSeq, limit_),
+    readByTag: (tag, afterOffset, limit_) => base.journal.readByTag(tag, afterOffset, limit_),
+  };
+  return { ...base, journal };
+}
+
+/** A journal that records where each read started, so a test can see what recovery replayed. */
+export function readsRecorded(base: Persistence): { persistence: Persistence; reads: number[] } {
+  const reads: number[] = [];
+  const journal: Journal = {
+    append: (id, expectedSeq, events) => base.journal.append(id, expectedSeq, events),
+    read(id, fromSeq, limit) {
+      reads.push(fromSeq);
+      return base.journal.read(id, fromSeq, limit);
+    },
+    readByTag: (tag, afterOffset, limit) => base.journal.readByTag(tag, afterOffset, limit),
+  };
+  return { persistence: { ...base, journal }, reads };
+}
+
 export function makeAgent(
   kit: TestKit,
   persistence: Persistence,

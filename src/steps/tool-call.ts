@@ -125,11 +125,13 @@ export function toolCall(options: ToolCallOptions): ActorDef<ToolCallMsg, ToolCa
         signal: controller.signal,
       });
       ctx.timers.startSingle('timeout', { type: 'timedOut' }, tool.timeoutMs);
-      ctx.pipeToSelf(runAttempt(tool, input, toolCtx), (result) => ({
-        type: 'settled',
-        attempt: n,
-        result,
-      }));
+      // With the signal, the pipe ends at the timeout or the stop, whatever the tool does, and the
+      // testkit doesn't wait on it as busy work (Troupe's 0038).
+      ctx.pipeToSelf(
+        runAttempt(tool, input, toolCtx),
+        (result) => ({ type: 'settled', attempt: n, result }),
+        { signal: controller.signal },
+      );
       return { attempt: n };
     },
 

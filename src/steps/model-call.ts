@@ -21,7 +21,14 @@ export interface ModelCallOptions {
 /** The child's own message, from its `pipeToSelf`. */
 export interface ModelCallMsg {
   readonly type: 'settled';
+  /** Which incarnation made the call, so an aborted earlier attempt's result is ignored. */
+  readonly attempt: number;
   readonly result: Result<ModelResponse>;
+}
+
+/** Which attempt this incarnation is making. */
+export interface ModelCallState {
+  readonly attempt: number;
 }
 
 function messageOf(error: unknown): string {
@@ -32,21 +39,29 @@ function messageOf(error: unknown): string {
  * The actor definition for one model call. Spawn it under the run, supervised with
  * `restartWithBackoff`.
  */
-export function modelCall(options: ModelCallOptions): ActorDef<ModelCallMsg, null> {
+export function modelCall(options: ModelCallOptions): ActorDef<ModelCallMsg, ModelCallState> {
   const { model, request, step, replyTo } = options;
   // Per incarnation, and not in state, since a controller isn't a plain value (Troupe's 0001).
+  let attempts = 0;
   let controller = new AbortController();
 
-  return actor<ModelCallMsg, null>({
+  return actor<ModelCallMsg, ModelCallState>({
     initial(ctx) {
+      attempts += 1;
       controller = new AbortController();
+      const n = attempts;
+      const { signal } = controller;
       // `call` may throw before it returns a promise. That's a failed call like any other.
-      const call = (async () => model.call(request, controller.signal))();
-      ctx.pipeToSelf(call, (result) => ({ type: 'settled', result }));
-      return null;
+      const call = (async () => model.call(request, signal))();
+      // With the signal, the pipe ends when the attempt is stopped, whatever the model does, and
+      // the testkit doesn't wait on it as busy work (Troupe's 0038).
+      ctx.pipeToSelf(call, (result) => ({ type: 'settled', attempt: n, result }), { signal });
+      return { attempt: n };
     },
 
     receive(state, msg, ctx) {
+      // An earlier incarnation's call, aborted as it ended. That incarnation has already reported.
+      if (msg.attempt !== state.attempt) return state;
       const { result } = msg;
       if (result.ok) {
         // Checked here, so a bad response is the model's failure, not a journal write that fails

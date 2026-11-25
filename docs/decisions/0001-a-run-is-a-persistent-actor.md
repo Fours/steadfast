@@ -1,6 +1,6 @@
 # 0001. A run is a persistent Troupe actor, and its journal is the run
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-24
 - **Milestone:** 1
 
@@ -30,7 +30,13 @@ Proposed. Milestone 1 proves it in T3 and T4: a test stops the system after ever
 - What runs next is derived from state alone. The same `act` starts the model call or the step's tool calls after any event, and leaves a child that's still running alone.
 - `onEvent` is pure. Folding a recorded run's events twice, with every event and every state frozen as it's made, gives equal states, and every prefix folds to a JSON value.
 
-Recovery past a clean start is T4's half of the proof, so this stays Proposed.
+**T4 (2026-11-24):** `test/run/recovery.test.ts`:
+
+- A five-step run, with two steps that call tools at the same time, is stopped after every event in turn. A journal that takes no appends past event N makes the crash, and a new kit spawns the run again on the same journal. Every time, the resumed run writes the same journal and the same report as a run that was never stopped. The answered requests from the first incarnation, followed by the second's requests, equal the uninterrupted run's requests, so a model call that was in flight is made again with the same request. The last response and `runFinished` are one append, so no crash lands between them.
+- Recovery is the same derivation as a live run: on `recoveryCompleted`, the run calls the `act` it uses after every event, with a flag for tool calls an earlier incarnation started (0003). A finished run only reports.
+- A run stopped after event 105 of 113 recovers from its snapshot at 100, reading the journal from 101, and the snapshot equals the fold of the first 100 events. Recovered again from every event, it makes the same requests and writes the same journal.
+
+Breaking it fails these tests: not resuming a pending model call, resuming it one step late, and turning snapshots off.
 
 ## Consequences
 

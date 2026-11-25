@@ -1,6 +1,6 @@
 # 0003. An unfinished step is retried on recovery when it's safe to repeat, and reported to the model when it isn't
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-24
 - **Milestone:** 1
 
@@ -22,7 +22,13 @@ Model calls have no side effects, so an unfinished one is always made again. Too
 
 ## Evidence
 
-Proposed. T4 proves it: an interrupted idempotent tool runs again with the same key, and an interrupted non-idempotent tool doesn't run again, while the model sees the interrupted error.
+**T4 (2026-11-24):** `test/run/recovery.test.ts`:
+
+- An idempotent tool that's in flight when its kit shuts down runs again when the run is spawned on the same journal. Both calls get the key `incident-4211:1:toolu_a`, and the model sees the second call's result.
+- A non-idempotent tool in the same situation isn't run again. The run journals `toolFinished` with `{ ok: false, interrupted: true }` and the "may or may not have run" error, and the next request carries it in call order, next to an idempotent call from the same step that had already finished. That call doesn't run again either.
+- Since onSignal can't persist, the interrupted result goes through the run's mailbox as a `toolReturned`, and the same command that journals a live result journals it.
+
+Breaking it fails these tests: running non-idempotent tools again on resume, treating every pending tool as interrupted, and giving each incarnation its own key.
 
 ## Consequences
 

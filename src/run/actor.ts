@@ -1,7 +1,7 @@
 // The run: a persistent actor whose journal is the run (decision 0001). It never calls a model or
 // a tool itself (decision 0002). Each command persists what a child learned, and then the new
 // state says what to start next. Nothing about what the run meant to do is journaled, so the same
-// derivation drives a fresh start and, from T4, a recovery.
+// derivation drives a fresh start and a recovery.
 
 import { supervise, type ActorContext, type ActorDef } from '@kylewillett/troupe';
 import {
@@ -13,7 +13,7 @@ import {
 import type { Agent, RunOptions } from '../agent.js';
 import type { ModelRequest, ToolSpec } from '../model.js';
 import { modelCall } from '../steps/model-call.js';
-import { toolCall } from '../steps/tool-call.js';
+import { mayHaveRun, toolCall } from '../steps/tool-call.js';
 import { finalText, initialState, onEvent, outcomeOf, wantsTools } from './state.js';
 import type { RunEvent, RunMsg, RunReport, RunState, RunStatus } from './types.js';
 
@@ -27,6 +27,8 @@ const STEP_BACKOFF = supervise.restartWithBackoff({
 });
 /** Snapshot every this many events. Bump the version whenever `RunState` changes shape. */
 const SNAPSHOTS = { every: 100, version: 1 } as const;
+/** What the model is told about a tool call that wasn't safe to run again (decision 0003). */
+export const INTERRUPTED = mayHaveRun('The tool was interrupted');
 /** Troupe's actor name pattern, which a provider's call id must fit to name a child. */
 const ACTOR_NAME = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,63}$/;
 
@@ -86,9 +88,10 @@ export function runActor(
   /**
    * Starts whatever the state is waiting on that isn't already running, or reports a finished
    * run. It's safe to call after any event: a child that's still running is found by its name and
-   * left alone.
+   * left alone. `resuming` is for the first call after a recovery, when a pending tool call was
+   * started by an earlier incarnation and may or may not have run.
    */
-  const act = (state: RunState, ctx: ActorContext<RunMsg>): void => {
+  const act = (state: RunState, ctx: ActorContext<RunMsg>, resuming = false): void => {
     if (state.phase === 'finished') {
       report(state);
       return;
@@ -124,6 +127,17 @@ export function runActor(
             step: state.step,
             callId: call.id,
             result: { ok: false, error: unknownTool(call.name, [...tools.keys()]) },
+          });
+          return;
+        }
+        if (resuming && !t.idempotent) {
+          // It isn't safe to repeat, so it doesn't run again, and the model decides what to do
+          // (decision 0003). Through the mailbox, since onSignal can't persist.
+          ctx.self.tell({
+            type: 'toolReturned',
+            step: state.step,
+            callId: call.id,
+            result: { ok: false, error: INTERRUPTED, interrupted: true },
           });
           return;
         }
@@ -210,8 +224,18 @@ export function runActor(
       if (signal.type !== 'recoveryCompleted') return;
       // onSignal can't persist, so starting is a command the run sends itself. Anything sent
       // during recovery is ahead of it in the mailbox, and sees the phase as `new`.
-      if (state.phase === 'new') ctx.self.tell({ type: 'start' });
-      // Resuming a run that has events is T4.
+      if (state.phase === 'new') {
+        ctx.self.tell({ type: 'start' });
+        return;
+      }
+      // The journal's input is the run's. The caller's is only for a run that hasn't started.
+      if (state.input !== input) {
+        ctx.log.warn(`${ctx.persistenceId}: resumed with a different input, which is ignored`, {
+          runId,
+        });
+      }
+      // The same derivation as after any event. A finished run reports, and starts nothing.
+      act(state, ctx, true);
     },
     ...(agent.persistence.snapshots === undefined ? {} : { snapshots: SNAPSHOTS }),
   });
