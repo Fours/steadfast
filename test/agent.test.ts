@@ -25,12 +25,13 @@ function options(overrides: Record<string, unknown> = {}): AgentOptions {
 describe('agent()', () => {
   it('fills in the budget’s defaults', () => {
     const a = agent(options());
-    expect(a.budget).toEqual({ maxSteps: 50, maxAttemptsPerStep: 5 });
+    expect(a.budget).toEqual({ maxSteps: 50, maxAttemptsPerStep: 5, maxDepth: 3 });
     expect(agent(options({ budget: { maxTokens: 200_000, deadlineMs: 900_000 } })).budget).toEqual({
       maxSteps: 50,
       maxTokens: 200_000,
       deadlineMs: 900_000,
       maxAttemptsPerStep: 5,
+      maxDepth: 3,
     });
     expect(Object.isFrozen(a)).toBe(true);
     expect(a.tools).toEqual([readLog]);
@@ -53,6 +54,7 @@ describe('agent()', () => {
     ['maxTokens', -1],
     ['deadlineMs', 1.5],
     ['maxAttemptsPerStep', '5'],
+    ['maxDepth', 0],
     ['maxSteps', Number.MAX_SAFE_INTEGER + 1],
   ])('throws on a budget.%s of %s', (key, value) => {
     expect(() => agent(options({ budget: { [key]: value } }))).toThrow(RangeError);
@@ -101,9 +103,29 @@ describe('agent()', () => {
       ['a reportTo that isn’t a ref', 'r1', { input: 'x', reportTo: {} }, 'reportTo must be'],
       ['a progressTo that isn’t a ref', 'r1', { input: 'x', progressTo: 3 }, 'progressTo must be'],
       ['an unknown option', 'r1', { input: 'x', reportto: null }, 'unknown option "reportto"'],
+      ['limits that aren’t an object', 'r1', { input: 'x', limits: 3 }, 'limits must be an object'],
+      ['an unknown limit', 'r1', { input: 'x', limits: { depth: 1 } }, 'unknown option "depth"'],
     ])('throws on %s', (_name, runId, runOptions, message) => {
       expect(() => a.run(runId as string, runOptions as { input: string })).toThrow(TypeError);
       expect(() => a.run(runId as string, runOptions as { input: string })).toThrow(message);
+    });
+
+    it.each([
+      ['deadlineAt', -1],
+      ['deadlineAt', 1.5],
+      ['maxTokens', 0],
+      ['depthLeft', -1],
+      ['depthLeft', '2'],
+    ])('throws on limits.%s of %s', (key, value) => {
+      const call = () => a.run('r1', { input: 'x', limits: { [key]: value } });
+      expect(call).toThrow(RangeError);
+      expect(call).toThrow(`limits.${key} must be an integer of at least`);
+    });
+
+    it('takes limits at their least', () => {
+      expect(() =>
+        a.run('r1', { input: 'x', limits: { deadlineAt: 0, maxTokens: 1, depthLeft: 0 } }),
+      ).not.toThrow();
     });
 
     it('takes the longest runId that fits', () => {

@@ -292,8 +292,8 @@ Do these in order. Each one ends with passing tests.
 | Task | Status | Commit |
 | --- | --- | --- |
 | T1. Model calls v2: options, streamed text, `paused`, bad input | Done | 39977ab |
-| T2. Progress | Done | |
-| T3. Sub-agents and limits | Not started | |
+| T2. Progress | Done | e31342e |
+| T3. Sub-agents and limits | Done | |
 | T4. Approvals | Not started | |
 | T5. Cancellation across the tree | Not started | |
 | T6. Streaming and the fallback in the Anthropic adapter | Not started | |
@@ -340,13 +340,21 @@ Do these in order. Each one ends with passing tests.
 
 **Done when** tests cover:
 
-- [ ] A delegation starts a sub-run with the task as its input, in its own stream, and its `completed` text is the tool's result. Any other outcome is an error result that names it.
-- [ ] Two delegations in one step run at the same time, each in its own stream.
-- [ ] Stopping the system after any event of the parent or the sub-run, and spawning the parent again, resumes both, and the tree ends as it would have with no stop. The sub-run's model calls are never repeated: the scripted models' requests are compared, as in milestone 1's T4.
-- [ ] A sub-run's deadline is no later than its parent's, its `maxTokens` is no more than what its parent had left, and a delegation with no depth left is an error result.
-- [ ] The parent's `treeUsage` includes each finished sub-run's usage, and a sub-run that uses up the parent's `maxTokens` finishes the parent with `tokensExceeded`.
-- [ ] A sub-run that throws is restarted, and recovers from its journal.
-- [ ] `delegate()` throws on bad options, and `agent()` on an agent that delegates to itself.
+- [x] A delegation starts a sub-run with the task as its input, in its own stream, and its `completed` text is the tool's result. Any other outcome is an error result that names it.
+- [x] Two delegations in one step run at the same time, each in its own stream.
+- [x] Stopping the system after any event of the parent or the sub-run, and spawning the parent again, resumes both, and the tree ends as it would have with no stop. The sub-run's model calls are never repeated: the scripted models' requests are compared, as in milestone 1's T4.
+- [x] A sub-run's deadline is no later than its parent's, its `maxTokens` is no more than what its parent had left, and a delegation with no depth left is an error result.
+- [x] The parent's `treeUsage` includes each finished sub-run's usage, and a sub-run that uses up the parent's `maxTokens` finishes the parent with `tokensExceeded`.
+- [x] A sub-run that throws is restarted, and recovers from its journal.
+- [x] `delegate()` throws on bad options, and `agent()` on an agent that delegates to itself.
+
+Notes from T3:
+
+- An agent's tools are copied when it's made, so it can't hold itself. `agent()` refuses a delegation to an agent of its own name, the nearest thing, since its sub-runs would read as the same agent in every journal.
+- `RunReport` and `RunStatus` gain `treeUsage` next to `usage`, rather than changing what `usage` means, and a delegation's `toolFinished` carries the sub-run's `treeUsage`.
+- `runStarted` carries `limits` only when the run was given some, as a sub-run always is. Budgets stay unjournaled, as in milestone 1, so a root's `depthLeft` comes from its agent's `maxDepth`.
+- `Tool` gains `delegatesTo`, so the tree reads back from the root agent alone. A delegation's `idempotent` and `timeoutMs` don't apply to it.
+- Until T5, a parent that finishes for any reason still stops its live sub-runs, as milestone 1 did, which leaves their journals unfinished.
 
 ### T4. Approvals
 

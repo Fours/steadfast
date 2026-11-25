@@ -25,4 +25,5 @@ Troupe's records are in `../troupe/docs/decisions/`. Cite them as "Troupe's 0011
 | [0003](0003-unfinished-steps-retry-only-when-safe.md) | An unfinished step is retried on recovery when it's safe to repeat, and reported to the model when it isn't | Accepted | 1 |
 | [0004](0004-built-on-troupe-with-no-other-dependencies.md) | Built on Troupe, with no other runtime dependencies: providers are adapters over structurally typed clients | Accepted | 1 |
 | [0005](0005-model-responses-are-journaled-verbatim.md) | Model responses are journaled verbatim, so runs replay without the model and providers get their own blocks back | Accepted | 1 |
+| [0006](0006-a-sub-agent-is-a-child-run-that-resumes.md) | A sub-agent is a child run, with its own journal, so an interrupted one resumes rather than retrying or reporting "may have run" | Proposed | 2 |
 | [0009](0009-progress-is-told-to-a-ref.md) | Progress is told to a ref captured by the run's definition: journaled events with their `seq`, and streamed text at most once | Proposed | 2 |

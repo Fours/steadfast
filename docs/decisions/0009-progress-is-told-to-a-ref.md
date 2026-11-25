@@ -39,7 +39,9 @@ Every message names its `runId`, so in T3 one ref can hear a whole tree, with su
 
 Breaking the seq offset, telling before the write, the attempt number, or `resumed`'s seq each makes these tests fail.
 
-Still to prove, in T3 and T8: one ref hears a whole tree of runs, and the example's narration is built from progress alone. This record becomes Accepted then.
+**T3 (2026-11-25):** `test/run/delegate.test.ts`: one ref given to the root hears `resumed` from the root and its sub-run, and every event of both journals, each with its `runId`.
+
+Still to prove, in T8: the example's narration is built from progress alone. This record becomes Accepted then.
 
 ## Consequences
 

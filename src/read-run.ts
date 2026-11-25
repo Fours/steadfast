@@ -5,7 +5,9 @@
 import type { Agent } from './agent.js';
 import type { JsonValue } from './json.js';
 import type { ModelResponse, ToolResult } from './model.js';
+import { depthLeftOf } from './run/budget.js';
 import { initialState, onEvent } from './run/state.js';
+import { isDelegation, planSubRun } from './run/sub-run.js';
 import type { RunEvent, RunState, StepError } from './run/types.js';
 
 /** What {@link readRun} takes. */
@@ -29,6 +31,14 @@ export interface TimelineAttempt {
   readonly error: StepError;
 }
 
+/** The sub-run a delegation started: its agent's name and its run id. */
+export interface TimelineSubRun {
+  /** The sub-agent's name. Its `Agent` is the delegation tool's `delegatesTo`. */
+  readonly agent: string;
+  /** Pass it to `readRun` with the sub-agent to read the sub-run. */
+  readonly runId: string;
+}
+
 /** One tool call of a step: what the model asked for, the failed attempts, and the result. */
 export interface TimelineToolCall {
   readonly callId: string;
@@ -39,6 +49,11 @@ export interface TimelineToolCall {
   readonly result?: ToolResult;
   /** The `seq` of the event that journaled `result`. */
   readonly resultSeq?: number;
+  /**
+   * For a call to a delegation, the sub-run it started, derived as the run derives it. Missing for
+   * other tools, and for a delegation that couldn't start, such as one with no depth left.
+   */
+  readonly subRun?: TimelineSubRun;
 }
 
 /** One step: a model call, and the tool calls its response asked for. */
@@ -132,7 +147,7 @@ async function read(agent: Agent, runId: string, upTo: number): Promise<RunTimel
       `readRun: ${id} ends at event ${String(events.length)}, before ${String(upTo)}`,
     );
   }
-  return { state, events, steps: stepsOf(events) };
+  return { state, events, steps: stepsOf(events, agent, runId) };
 }
 
 interface DraftTool {
@@ -142,6 +157,7 @@ interface DraftTool {
   attempts: TimelineAttempt[];
   result?: ToolResult;
   resultSeq?: number;
+  subRun?: TimelineSubRun;
 }
 
 interface DraftStep {
@@ -153,7 +169,9 @@ interface DraftStep {
 }
 
 /** Groups events by step. Every event but `runStarted` and `runFinished` names its step. */
-function stepsOf(events: readonly TimelineEvent[]): TimelineStep[] {
+function stepsOf(events: readonly TimelineEvent[], agent: Agent, runId: string): TimelineStep[] {
+  const tools = new Map(agent.tools.map((t) => [t.name, t]));
+  let depthLeft = depthLeftOf(agent.budget, {});
   const steps = new Map<number, DraftStep>();
   const stepFor = (step: number): DraftStep => {
     let draft = steps.get(step);
@@ -179,9 +197,22 @@ function stepsOf(events: readonly TimelineEvent[]): TimelineStep[] {
         const draft = stepFor(event.step);
         draft.response = event.response;
         draft.responseSeq = seq;
-        for (const call of event.response.toolCalls) {
-          draft.tools.push({ callId: call.id, name: call.name, input: call.input, attempts: [] });
-        }
+        event.response.toolCalls.forEach((call, index) => {
+          const drafted: DraftTool = {
+            callId: call.id,
+            name: call.name,
+            input: call.input,
+            attempts: [],
+          };
+          const t = tools.get(call.name);
+          // Only a toolUse response's calls run: a paused one's start nothing.
+          if (t !== undefined && isDelegation(t) && event.response.stop === 'toolUse') {
+            const plan = planSubRun(t, call, runId, event.step, index, depthLeft);
+            if (plan.kind === 'start')
+              drafted.subRun = { agent: plan.agent.name, runId: plan.runId };
+          }
+          draft.tools.push(drafted);
+        });
         break;
       }
       case 'attemptFailed': {
@@ -198,6 +229,8 @@ function stepsOf(events: readonly TimelineEvent[]): TimelineStep[] {
         break;
       }
       case 'runStarted':
+        depthLeft = depthLeftOf(agent.budget, event.limits ?? {});
+        break;
       case 'runFinished':
         break;
     }

@@ -3,6 +3,7 @@
 // child's job (src/steps/tool-call.ts), never the run's (decision 0002).
 
 import type { StandardSchemaV1 } from '@kylewillett/troupe/persistence';
+import type { Agent } from './agent.js';
 import { jsonProblem, type JsonValue } from './json.js';
 import type { JsonSchemaObject } from './model.js';
 
@@ -60,6 +61,12 @@ export interface Tool<
 > extends ToolDef<I, O> {
   readonly idempotent: boolean;
   readonly timeoutMs: number;
+  /**
+   * The agent a tool made by `delegate()` hands its task to. The run starts a sub-run of it instead
+   * of calling `run`, and `idempotent` and `timeoutMs` don't apply: a sub-run resumes rather than
+   * retrying, and its limits bound it. Missing on a tool made by {@link tool}.
+   */
+  readonly delegatesTo?: Agent;
 }
 
 /**

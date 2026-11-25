@@ -8,8 +8,13 @@ import {
 } from '@kylewillett/troupe/persistence';
 import {
   agent,
+  delegate,
   tool,
   type Agent,
+  type Budget,
+  type DelegateOptions,
+  type RunLimits,
+  type TimelineToolCall,
   type JsonValue,
   type Model,
   type ModelCallOptions,
@@ -180,6 +185,7 @@ describe('types', () => {
       readonly outcome: Outcome;
       readonly text: string;
       readonly usage: { readonly inputTokens: number; readonly outputTokens: number };
+      readonly treeUsage: { readonly inputTokens: number; readonly outputTokens: number };
     }>();
   });
 
@@ -223,6 +229,39 @@ describe('types', () => {
   it('status takes a ref for RunStatus', () => {
     expectTypeOf<Extract<RunMsg, { type: 'status' }>['replyTo']>().toEqualTypeOf<
       ActorRef<RunStatus>
+    >();
+  });
+
+  it('delegate makes a Tool from an Agent, and a run hears its sub-runs’ reports', () => {
+    const analyst = agent({
+      name: 'log-analyst',
+      model: scriptedModel([]),
+      system: 's',
+      persistence: inMemoryPersistence(),
+    });
+    expectTypeOf(delegate(analyst, { description: 'd' })).toEqualTypeOf<Tool>();
+    expectTypeOf<Tool['delegatesTo']>().toEqualTypeOf<Agent | undefined>();
+    expectTypeOf<DelegateOptions>().toEqualTypeOf<{
+      readonly name?: string;
+      readonly description: string;
+    }>();
+    // @ts-expect-error A description is required.
+    expectTypeOf(() => delegate(analyst, {})).toBeFunction();
+
+    // A run is its sub-runs' `reportTo`, so its protocol takes their reports.
+    expectTypeOf<RunReport>().toExtend<RunMsg>();
+    expectTypeOf<ActorRef<RunMsg>>().toExtend<ActorRef<RunReport>>();
+
+    expectTypeOf<RunOptions['limits']>().toEqualTypeOf<RunLimits | undefined>();
+    expectTypeOf<RunLimits>().toEqualTypeOf<{
+      readonly deadlineAt?: number;
+      readonly maxTokens?: number;
+      readonly depthLeft?: number;
+    }>();
+    expectTypeOf<Budget['maxDepth']>().toEqualTypeOf<number | undefined>();
+    expectTypeOf<RunState['treeUsage']>().toEqualTypeOf<RunState['usage']>();
+    expectTypeOf<TimelineToolCall['subRun']>().toEqualTypeOf<
+      { readonly agent: string; readonly runId: string } | undefined
     >();
   });
 });

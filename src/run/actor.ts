@@ -14,12 +14,31 @@ import type { Agent, RunOptions } from '../agent.js';
 import type { ModelRequest, ToolSpec } from '../model.js';
 import { modelCall, retryAfterOf } from '../steps/model-call.js';
 import { mayHaveRun, toolCall } from '../steps/tool-call.js';
-import { afterResponse, attemptsRunOut, deadlinePassed, timeLeft, type Stop } from './budget.js';
+import {
+  afterResponse,
+  attemptsRunOut,
+  deadlineOf,
+  deadlinePassed,
+  depthLeftOf,
+  limitsFor,
+  timeLeft,
+  tokensRunOut,
+  type Stop,
+} from './budget.js';
 import { continues, finalText, initialState, onEvent, outcomeOf } from './state.js';
+import {
+  ACTOR_NAME,
+  delegationResult,
+  isDelegation,
+  planSubRun,
+  subRunChildName,
+  subRunId,
+} from './sub-run.js';
 import {
   attemptKey,
   type RunEvent,
   type RunMsg,
+  type RunLimits,
   type RunProgress,
   type RunReport,
   type RunState,
@@ -39,14 +58,21 @@ const STEP_BACKOFF = supervise.restartWithBackoff({
   randomFactor: 0.2,
   minDelayFor: retryAfterOf,
 });
+/**
+ * Sub-runs are persistent actors, restarted with backoff as Troupe recommends for them: a bug or a
+ * journal that's down won't clear up at once, and every restart reads the stream again.
+ */
+const SUB_RUN_BACKOFF = supervise.restartWithBackoff({
+  minMs: 1_000,
+  maxMs: 60_000,
+  randomFactor: 0.2,
+});
 /** Snapshot every this many events. Bump the version whenever `RunState` changes shape. */
-const SNAPSHOTS = { every: 100, version: 1 } as const;
+const SNAPSHOTS = { every: 100, version: 2 } as const;
 /** What the model is told about a tool call that wasn't safe to run again (decision 0003). */
 export const INTERRUPTED = mayHaveRun('The tool was interrupted');
 /** The key of the run's one timer. */
 const DEADLINE = 'deadline';
-/** Troupe's actor name pattern, which a provider's call id must fit to name a child. */
-const ACTOR_NAME = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,63}$/;
 
 /** The model-call child's name for a step. */
 export function modelChildName(step: number): string {
@@ -69,6 +95,7 @@ export function statusOf(state: RunState): RunStatus {
     phase: state.phase,
     step: state.step,
     usage: state.usage,
+    treeUsage: state.treeUsage,
     pending: state.pending,
     ...(state.outcome === undefined ? {} : { outcome: state.outcome }),
   };
@@ -80,7 +107,7 @@ export function runActor(
   runId: string,
   options: RunOptions,
 ): ActorDef<RunMsg, PersistentState<RunState>> {
-  const { input, reportTo, progressTo } = options;
+  const { input, reportTo, progressTo, limits } = options;
   const tools = new Map(agent.tools.map((t) => [t.name, t]));
   const specs: readonly ToolSpec[] = agent.tools.map((t) => ({
     name: t.name,
@@ -97,6 +124,7 @@ export function runActor(
       outcome: state.outcome ?? 'failed',
       text: state.text ?? '',
       usage: state.usage,
+      treeUsage: state.treeUsage,
     };
     reportTo.tell(message);
   };
@@ -153,9 +181,34 @@ export function runActor(
       const calls = last?.role === 'assistant' ? last.response.toolCalls : [];
       calls.forEach((call, index) => {
         if (!pending.callIds.includes(call.id)) return;
+        const t = tools.get(call.name);
+        if (t !== undefined && isDelegation(t)) {
+          // A sub-run is started again on recovery, never reported as interrupted: it has a
+          // journal of its own, so it resumes from it, or reports at once if it had finished.
+          const name = subRunChildName(state.step, call.id, index);
+          if (ctx.child(name) !== undefined) return;
+          const depthLeft = depthLeftOf(agent.budget, state.limits);
+          const plan = planSubRun(t, call, runId, state.step, index, depthLeft);
+          if (plan.kind === 'error') {
+            ctx.self.tell({
+              type: 'toolReturned',
+              step: state.step,
+              callId: call.id,
+              result: { ok: false, error: plan.error },
+            });
+            return;
+          }
+          const sub = plan.agent.run(plan.runId, {
+            input: plan.task,
+            reportTo: ctx.self,
+            ...(progressTo === undefined ? {} : { progressTo }),
+            limits: limitsFor(agent.budget, state),
+          });
+          ctx.spawn(sub, name, { supervision: SUB_RUN_BACKOFF });
+          return;
+        }
         const name = toolChildName(state.step, call.id, index);
         if (ctx.child(name) !== undefined) return;
-        const t = tools.get(call.name);
         // Nothing to run, so the result is known now. It goes through the mailbox like any other,
         // so it's journaled by the same command.
         const known = (error: string): void => {
@@ -228,7 +281,7 @@ export function runActor(
    * run so: onSignal can't persist, so finishing is a command like any other.
    */
   const armDeadline = (state: RunState, ctx: ActorContext<RunMsg>): boolean => {
-    const left = timeLeft(agent.budget, state.startedAt, agent.clock());
+    const left = timeLeft(agent.budget, state.limits, state.startedAt, agent.clock());
     if (left === undefined) return true;
     if (left === 0) {
       ctx.self.tell({ type: 'deadline' });
@@ -236,6 +289,23 @@ export function runActor(
     }
     ctx.timers.startSingle(DEADLINE, { type: 'deadline' }, left);
     return true;
+  };
+
+  /** The pending delegation whose sub-run is `subId`, with its child's name. */
+  const delegationFor = (
+    state: RunState,
+    subId: string,
+  ): { callId: string; childName: string } | undefined => {
+    const { pending } = state;
+    if (state.phase !== 'running' || pending.kind !== 'tools') return undefined;
+    const last = state.transcript.at(-1);
+    const calls = last?.role === 'assistant' ? last.response.toolCalls : [];
+    const index = calls.findIndex((_, i) => subRunId(runId, state.step, i) === subId);
+    const call = calls[index];
+    if (call === undefined || !pending.callIds.includes(call.id)) return undefined;
+    const t = tools.get(call.name);
+    if (t === undefined || !isDelegation(t)) return undefined;
+    return { callId: call.id, childName: subRunChildName(state.step, call.id, index) };
   };
 
   /** The child working on `target` of `step`, if it hasn't terminated. */
@@ -253,6 +323,7 @@ export function runActor(
     model: agent.model.name,
     input,
     startedAt: agent.clock(),
+    ...(limits === undefined ? {} : { limits: { ...limits } satisfies RunLimits }),
   });
 
   const onCommand = (state: RunState, msg: RunMsg, ctx: Ctx): Effect<RunEvent, RunState> => {
@@ -273,14 +344,22 @@ export function runActor(
         return persistThenAct(ctx, cancelled);
       }
       case 'deadline':
-        if (state.phase !== 'running' || agent.budget.deadlineMs === undefined) return ctx.none();
-        return persistThenAct(ctx, finished(deadlinePassed(agent.budget.deadlineMs)));
+        if (
+          state.phase !== 'running' ||
+          deadlineOf(agent.budget, state.limits, state.startedAt) === undefined
+        ) {
+          return ctx.none();
+        }
+        return persistThenAct(
+          ctx,
+          finished(deadlinePassed(agent.budget, state.limits, state.startedAt)),
+        );
       case 'modelReplied': {
         if (!awaitsModel(state, msg.step)) return ctx.none();
         const { response } = msg;
         const responded: RunEvent = { type: 'modelResponded', step: msg.step, response };
-        const usage = onEvent(state, responded).usage;
-        const stop = afterResponse(agent.budget, msg.step, usage, response);
+        const { treeUsage } = onEvent(state, responded);
+        const stop = afterResponse(agent.budget, state.limits, msg.step, treeUsage, response);
         // A budget that runs out ends the run instead of the tools it asked for, in the same write.
         if (stop !== undefined) return persistThenAct(ctx, responded, finished(stop));
         if (continues(response)) return persistThenAct(ctx, responded);
@@ -307,6 +386,30 @@ export function runActor(
           callId: msg.callId,
           result: msg.result,
         });
+      case 'runFinished': {
+        // A sub-run's report. Its id says which delegation it answers, since both are derived
+        // from the journal. A report for a call the run isn't waiting on changes nothing.
+        const call = delegationFor(state, msg.runId);
+        if (call === undefined) return ctx.none();
+        const done: RunEvent = {
+          type: 'toolFinished',
+          step: state.step,
+          callId: call.callId,
+          result: delegationResult(msg),
+          usage: msg.treeUsage,
+        };
+        // Delegation isn't a way around the budget: the tree's usage is checked once it's in, and
+        // running out ends the run in the same write.
+        const stop = tokensRunOut(agent.budget, state.limits, onEvent(state, done).treeUsage);
+        const events = stop === undefined ? [done] : [done, finished(stop)];
+        return persist(ctx, ...events).thenRun((next) => {
+          // Its report is in, so its actor's work is done. Stopped before the next state acts,
+          // as a given-up tool call is.
+          const child = ctx.child(call.childName);
+          if (child !== undefined) ctx.stop(child);
+          act(next, ctx);
+        });
+      }
       case 'attemptFailed': {
         const { target } = msg;
         const current =

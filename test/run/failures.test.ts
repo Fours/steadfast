@@ -196,6 +196,7 @@ describe('a model call', () => {
       outcome: 'failed',
       text: 'The model call failed 5 times. The last error: Rate limited (429)',
       usage: { inputTokens: 0, outputTokens: 0 },
+      treeUsage: { inputTokens: 0, outputTokens: 0 },
     });
     // The child was stopped while it waited out its backoff, so nothing calls again.
     await kit.advance(120_000);

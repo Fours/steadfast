@@ -2,22 +2,32 @@
 // and `readRun` folds the same events the same way, so it reads nothing but its arguments, never
 // mutates them, and never throws for an event it has accepted (Troupe's 0012).
 
-import type { ModelResponse, StopReason, ToolResult, Turn } from '../model.js';
+import type { ModelResponse, StopReason, ToolResult, Turn, Usage } from '../model.js';
 import { attemptKey, type Outcome, type RunEvent, type RunState } from './types.js';
 
 const initial: RunState = {
   phase: 'new',
   input: '',
   startedAt: 0,
+  limits: {},
   transcript: [],
   step: 0,
   usage: { inputTokens: 0, outputTokens: 0 },
+  treeUsage: { inputTokens: 0, outputTokens: 0 },
   pending: { kind: 'none' },
   stepResults: [],
   attempts: {},
 };
 /** The state before any event. */
 export const initialState: RunState = Object.freeze(initial);
+
+/** Two usages added up. */
+export function addUsage(a: Usage, b: Usage): Usage {
+  return {
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+  };
+}
 
 /** Whether a response asks for tools the run should now call. */
 export function wantsTools(response: ModelResponse): boolean {
@@ -65,6 +75,8 @@ export function onEvent(state: RunState, event: RunEvent): RunState {
         phase: 'running',
         input: event.input,
         startedAt: event.startedAt,
+        // A journal from before limits existed has none.
+        limits: event.limits ?? {},
         transcript: [{ role: 'user', text: event.input }],
         pending: { kind: 'model' },
       };
@@ -74,10 +86,8 @@ export function onEvent(state: RunState, event: RunEvent): RunState {
         ...state,
         step: event.step,
         transcript: [...state.transcript, { role: 'assistant', response }],
-        usage: {
-          inputTokens: state.usage.inputTokens + response.usage.inputTokens,
-          outputTokens: state.usage.outputTokens + response.usage.outputTokens,
-        },
+        usage: addUsage(state.usage, response.usage),
+        treeUsage: addUsage(state.treeUsage, response.usage),
         // A paused turn goes straight back to the model, with nothing added: the provider resumes
         // from the response itself. Its stop reason wins over any tool calls in it.
         pending:
@@ -89,8 +99,12 @@ export function onEvent(state: RunState, event: RunEvent): RunState {
         stepResults: [],
       };
     }
-    case 'toolFinished':
-      return toolFinished(state, event.callId, event.result);
+    case 'toolFinished': {
+      const next = toolFinished(state, event.callId, event.result);
+      // A sub-run's usage counts once its delegation is in. An older journal's events have none.
+      if (next === state || event.usage === undefined) return next;
+      return { ...next, treeUsage: addUsage(next.treeUsage, event.usage) };
+    }
     case 'attemptFailed': {
       const key = attemptKey(event.step, event.target);
       return { ...state, attempts: { ...state.attempts, [key]: (state.attempts[key] ?? 0) + 1 } };

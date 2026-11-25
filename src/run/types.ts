@@ -19,6 +19,23 @@ export type Outcome =
   | 'cancelled'
   | 'failed';
 
+/**
+ * Limits a run starts with from whoever started it, on top of its agent's budget. A sub-run gets
+ * them from its parent, so it can't outlive or outspend it. Journaled in `runStarted`, so a restart
+ * keeps them.
+ */
+export interface RunLimits {
+  /**
+   * Wall-clock ms, on the agent's clock. The run's deadline is the earlier of this and its own.
+   * Agents in one tree should share a clock, since a parent's deadline is read on its sub-agent's.
+   */
+  readonly deadlineAt?: number;
+  /** Tokens for the whole tree under this run. The run's budget is the smaller of this and its own. */
+  readonly maxTokens?: number;
+  /** How many more levels of sub-runs may start under this one. Default: the agent's maxDepth. */
+  readonly depthLeft?: number;
+}
+
 /** What the run is waiting on, derived from its events and never journaled on its own. */
 export type Pending =
   | { readonly kind: 'model' }
@@ -34,6 +51,8 @@ export type RunEvent =
       readonly input: string;
       /** Wall-clock ms from the agent's clock, so a deadline means something after a restart. */
       readonly startedAt: number;
+      /** The limits the run was started with. Missing when there were none. */
+      readonly limits?: RunLimits;
     }
   | { readonly type: 'modelResponded'; readonly step: number; readonly response: ModelResponse }
   | {
@@ -41,6 +60,8 @@ export type RunEvent =
       readonly step: number;
       readonly callId: string;
       readonly result: ToolResult;
+      /** A delegation's: everything its sub-run's tree used. */
+      readonly usage?: Usage;
     }
   | {
       readonly type: 'attemptFailed';
@@ -57,9 +78,14 @@ export interface RunState {
   readonly startedAt: number;
   /** What the model sees: the input, each response, and each batch of tool results. */
   readonly transcript: readonly Turn[];
+  /** The limits the run started with: `{}` for none. */
+  readonly limits: RunLimits;
   /** Model calls answered so far. */
   readonly step: number;
+  /** What the run's own model calls used. */
   readonly usage: Usage;
+  /** What the run and every finished sub-run under it used. `maxTokens` is checked against it. */
+  readonly treeUsage: Usage;
   /** What the run is waiting on. */
   readonly pending: Pending;
   /**
@@ -78,6 +104,7 @@ export interface RunStatus {
   readonly phase: RunState['phase'];
   readonly step: number;
   readonly usage: Usage;
+  readonly treeUsage: Usage;
   readonly pending: Pending;
   readonly outcome?: Outcome;
 }
@@ -88,7 +115,10 @@ export interface RunReport {
   readonly runId: string;
   readonly outcome: Outcome;
   readonly text: string;
+  /** What the run's own model calls used. */
   readonly usage: Usage;
+  /** What the run and every sub-run under it used. */
+  readonly treeUsage: Usage;
 }
 
 /**
@@ -145,7 +175,7 @@ export type ModelCallReport = ModelReplied | ModelFailed | AttemptFailed;
 /**
  * The run's messages. `status` and `cancel` are for callers. The rest are internal, sent by the run
  * itself, its children and its timers, and exported so the type is complete. Each message from a
- * child carries its step, and the run ignores one for a step it's no longer on.
+ * child carries its step, or a sub-run's id, and the run ignores one for a call it isn't waiting on.
  */
 export type RunMsg =
   | { readonly type: 'status'; readonly replyTo: ActorRef<RunStatus> }
@@ -158,7 +188,9 @@ export type RunMsg =
   | ModelReplied
   | ModelFailed
   | ToolReturned
-  | AttemptFailed;
+  | AttemptFailed
+  /** A sub-run's report, which is its delegation's result. */
+  | RunReport;
 
 /** The key `attempts` counts a step's target under. */
 export function attemptKey(step: number, target: StepTarget): string {

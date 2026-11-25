@@ -5,7 +5,7 @@ import type { ActorDef, ActorRef } from '@kylewillett/troupe';
 import type { Persistence, PersistentState } from '@kylewillett/troupe/persistence';
 import type { Model } from './model.js';
 import { runActor } from './run/actor.js';
-import type { RunMsg, RunProgress, RunReport, RunState } from './run/types.js';
+import type { RunLimits, RunMsg, RunProgress, RunReport, RunState } from './run/types.js';
 import type { Tool } from './tool.js';
 
 /** Limits on one run. Every value is a positive integer. */
@@ -18,6 +18,11 @@ export interface Budget {
   readonly deadlineMs?: number;
   /** Failed attempts at one model call or one tool call before giving up. Default 5. */
   readonly maxAttemptsPerStep?: number;
+  /**
+   * Levels of sub-runs that may start under a run of this agent. Default 3. Only a root run's
+   * counts, since a sub-run inherits what's left of its parent's.
+   */
+  readonly maxDepth?: number;
 }
 
 /** A budget with its defaults filled in. */
@@ -26,6 +31,7 @@ export interface CheckedBudget {
   readonly maxTokens?: number;
   readonly deadlineMs?: number;
   readonly maxAttemptsPerStep: number;
+  readonly maxDepth: number;
 }
 
 /** What {@link agent} takes. */
@@ -54,6 +60,11 @@ export interface RunOptions {
    * generated, and where the run resumed. A slow or stopped listener never slows or breaks the run.
    */
   readonly progressTo?: ActorRef<RunProgress>;
+  /**
+   * Limits on top of the agent's budget, such as a tighter deadline for this run. A sub-run gets
+   * its parent's. Used only when the journal has no events for the run, like `input`.
+   */
+  readonly limits?: RunLimits;
 }
 
 /** A checked agent, made by {@link agent}. */
@@ -78,8 +89,15 @@ export interface Agent {
 
 const NAME = /^[a-zA-Z0-9_-]{1,64}$/;
 const KEYS = new Set(['name', 'model', 'system', 'tools', 'budget', 'persistence', 'clock']);
-const BUDGET_KEYS = new Set(['maxSteps', 'maxTokens', 'deadlineMs', 'maxAttemptsPerStep']);
-const RUN_KEYS = new Set(['input', 'reportTo', 'progressTo']);
+const BUDGET_KEYS = new Set([
+  'maxSteps',
+  'maxTokens',
+  'deadlineMs',
+  'maxAttemptsPerStep',
+  'maxDepth',
+]);
+const RUN_KEYS = new Set(['input', 'reportTo', 'progressTo', 'limits']);
+const LIMIT_KEYS = new Set(['deadlineAt', 'maxTokens', 'depthLeft']);
 /** Troupe's limit on a persistence id. */
 const MAX_ID_LENGTH = 255;
 
@@ -98,6 +116,14 @@ function checkKeys(value: Record<string, unknown>, keys: ReadonlySet<string>, wh
   for (const key of Object.keys(value)) {
     if (!keys.has(key)) throw new TypeError(`${where}: unknown option "${key}"`);
   }
+}
+
+/** Every agent `agent()` has made, so `delegate()` can tell one from a look-alike. */
+const made = new WeakSet<Agent>();
+
+/** Whether `value` was made by {@link agent}. */
+export function isAgent(value: unknown): value is Agent {
+  return typeof value === 'object' && value !== null && made.has(value as Agent);
 }
 
 // The default wall clock, for a run's start and its deadline: the injected clock's default, and
@@ -126,6 +152,12 @@ export function agent(options: AgentOptions): Agent {
   }
   if (typeof raw.system !== 'string') throw new TypeError(`${where}: system must be a string`);
   const tools = checkTools(raw.tools ?? [], where);
+  // An agent can't hold itself, since its tools are copied when it's made. One with its name is
+  // the nearest thing: its sub-runs would read as the same agent in every journal.
+  const self = tools.find((t) => t.delegatesTo?.name === name);
+  if (self !== undefined) {
+    throw new TypeError(`${where}: tool "${self.name}" delegates to an agent of the same name`);
+  }
   const budget = checkBudget(raw.budget ?? {}, where);
   const { persistence } = raw;
   if (
@@ -155,6 +187,7 @@ export function agent(options: AgentOptions): Agent {
       return runActor(checked, runId, runOptions);
     },
   });
+  made.add(checked);
   return checked;
 }
 
@@ -195,6 +228,7 @@ function checkBudget(value: unknown, where: string): CheckedBudget {
     ...(b.maxTokens === undefined ? {} : { maxTokens: b.maxTokens }),
     ...(b.deadlineMs === undefined ? {} : { deadlineMs: b.deadlineMs }),
     maxAttemptsPerStep: b.maxAttemptsPerStep ?? 5,
+    maxDepth: b.maxDepth ?? 3,
   });
 }
 
@@ -221,6 +255,22 @@ function checkRun(
     const ref = options[key];
     if (ref !== undefined && !(isObject(ref) && typeof ref.tell === 'function')) {
       throw new TypeError(`${where}: ${key} must be an actor ref`);
+    }
+  }
+  if (options.limits !== undefined) checkLimits(options.limits, where);
+}
+
+function checkLimits(limits: unknown, where: string): void {
+  if (!isObject(limits)) throw new TypeError(`${where}: limits must be an object`);
+  checkKeys(limits, LIMIT_KEYS, `${where}: limits`);
+  // A deadline can be 0 on a clock that starts there, and no depth left is a real limit.
+  const least = { deadlineAt: 0, maxTokens: 1, depthLeft: 0 } as const;
+  for (const key of LIMIT_KEYS as ReadonlySet<keyof typeof least>) {
+    const v = limits[key];
+    if (v !== undefined && !(typeof v === 'number' && Number.isSafeInteger(v) && v >= least[key])) {
+      throw new RangeError(
+        `${where}: limits.${key} must be an integer of at least ${String(least[key])}, got ${describe(v)}`,
+      );
     }
   }
 }

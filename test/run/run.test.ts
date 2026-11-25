@@ -61,6 +61,7 @@ describe('a run', () => {
       outcome: 'completed',
       text: 'The cause is a bad deploy.',
       usage: usage(120, 30),
+      treeUsage: usage(120, 30),
     });
     reporter.expectNoMessage();
     expect(model.requests).toEqual([
@@ -209,6 +210,7 @@ describe('a run', () => {
         outcome: 'completed',
         text: 'A bad deploy of the gateway.',
         usage: usage(150, 20),
+        treeUsage: usage(150, 20),
       });
     });
 
@@ -242,6 +244,7 @@ describe('a run', () => {
         phase: 'new',
         step: 0,
         usage: usage(0, 0),
+        treeUsage: usage(0, 0),
         pending: { kind: 'none' },
       });
 
@@ -250,6 +253,7 @@ describe('a run', () => {
         phase: 'running',
         step: 1,
         usage: usage(100, 10),
+        treeUsage: usage(100, 10),
         pending: { kind: 'tools', callIds: ['read_log_1'] },
       });
 
@@ -259,6 +263,7 @@ describe('a run', () => {
         phase: 'finished',
         step: 2,
         usage: usage(300, 30),
+        treeUsage: usage(300, 30),
         pending: { kind: 'none' },
         outcome: 'completed',
       });
@@ -380,6 +385,7 @@ describe('a run', () => {
         outcome: 'failed',
         text: 'The model call failed: scriptedModel: call 1, but the script has 0 entries',
         usage: usage(0, 0),
+        treeUsage: usage(0, 0),
       });
     });
   });

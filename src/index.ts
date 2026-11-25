@@ -25,6 +25,7 @@ export {
   type CheckedBudget,
   type RunOptions,
 } from './agent.js';
+export { delegate, type DelegateOptions } from './delegate.js';
 export type {
   ModelCallReport,
   ModelFailed,
@@ -32,6 +33,7 @@ export type {
   Outcome,
   Pending,
   RunEvent,
+  RunLimits,
   RunMsg,
   RunProgress,
   RunReport,
@@ -48,5 +50,6 @@ export {
   type TimelineAttempt,
   type TimelineEvent,
   type TimelineStep,
+  type TimelineSubRun,
   type TimelineToolCall,
 } from './read-run.js';
