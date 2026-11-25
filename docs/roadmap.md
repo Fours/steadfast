@@ -81,6 +81,8 @@ Scope:
 - Progress events for callers and UIs, including streamed model output
 - A second provider adapter, to prove the `Model` interface isn't shaped around the first
 
+Spec: [milestone-2.md](milestone-2.md).
+
 ### 3. Run inspector, demo site, first npm release
 
 **Outcome:** a public demo site runs Steadfast in the browser with no backend and no API key, on scripted models. A visitor watches an agent work, crashes a tool or the whole run, and sees it recover. A run timeline shows every step, and can be scrubbed back through time. The package is on npm.
