@@ -50,14 +50,17 @@ export function depthLeftOf(budget: CheckedBudget, limits: RunLimits): number {
 /**
  * The limits a run hands down to a sub-run it starts now: its own deadline, what's left of its
  * tokens, counting every finished sub-run, and one level less. Only a run with depth left
- * delegates, and one with no tokens left has already finished, so both stay valid limits.
+ * delegates, so the depth stays a valid limit.
  */
 export function limitsFor(budget: CheckedBudget, state: RunState): RunLimits {
   const deadlineAt = deadlineOf(budget, state.limits, state.startedAt);
   const maxTokens = maxTokensOf(budget, state.limits);
   return {
     ...(deadlineAt === undefined ? {} : { deadlineAt }),
-    ...(maxTokens === undefined ? {} : { maxTokens: maxTokens - total(state.treeUsage) }),
+    // Never below 0: a finished run that has run out still hands limits to the sub-runs it closes.
+    ...(maxTokens === undefined
+      ? {}
+      : { maxTokens: Math.max(0, maxTokens - total(state.treeUsage)) }),
     depthLeft: depthLeftOf(budget, state.limits) - 1,
   };
 }

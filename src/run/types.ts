@@ -163,6 +163,11 @@ export interface RunState {
   readonly approvals: Readonly<Record<string, Approval>>;
   /** Failed attempts so far, keyed by {@link attemptKey}. */
   readonly attempts: Readonly<Record<string, number>>;
+  /**
+   * The calls the run was still waiting on when it finished. A finished run closes the sub-run of
+   * each delegation among them whenever it's spawned, so none is left open (decision 0008).
+   */
+  readonly unfinished: readonly string[];
   readonly outcome?: Outcome;
   readonly text?: string;
 }
@@ -176,7 +181,7 @@ export interface RunStatus {
   readonly pending: Pending;
   /** The run's own calls waiting for a decision. A sub-run's are in its own status. */
   readonly approvals: readonly PendingApproval[];
-  /** The sub-runs working for the run now. */
+  /** The sub-runs working for the run now, or, once it has finished, those it's still closing. */
   readonly subRuns: readonly SubRun[];
   readonly outcome?: Outcome;
 }
@@ -262,8 +267,13 @@ export type ModelCallReport = ModelReplied | ModelFailed | AttemptFailed;
  */
 export type RunMsg =
   | { readonly type: 'status'; readonly replyTo: ActorRef<RunStatus> }
-  /** Finishes the run with `cancelled`, and stops its children. A finished run ignores it. */
-  | { readonly type: 'cancel'; readonly reason: string }
+  /**
+   * Finishes the run with `cancelled`. Its calls are stopped, and every sub-run under it is
+   * cancelled and journals that too (decision 0008). A finished run ignores it. With a `runId`
+   * other than the run's own, it's forwarded to the sub-run that id is in, as `decide` is, and an
+   * id with no live run under it changes nothing.
+   */
+  | { readonly type: 'cancel'; readonly reason: string; readonly runId?: string }
   /**
    * A person's decision on a call waiting for approval. Send it to the root: a run forwards it to
    * the sub-run `runId` is in. The first decision wins (decision 0007).
@@ -281,6 +291,8 @@ export type RunMsg =
     }
   /** A call's approval timer. */
   | { readonly type: 'approvalTimedOut'; readonly step: number; readonly callId: string }
+  /** A finished run's sub-runs haven't all closed in time. */
+  | { readonly type: 'closingTimedOut' }
   /** Sent to itself when recovery finds no events, so starting is a command that persists. */
   | { readonly type: 'start' }
   /** The deadline timer, or a recovery that finds the deadline already past. */

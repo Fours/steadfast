@@ -18,6 +18,7 @@ const initial: RunState = {
   stepResults: [],
   approvals: {},
   attempts: {},
+  unfinished: [],
 };
 /** The state before any event. */
 export const initialState: RunState = Object.freeze(initial);
@@ -135,6 +136,8 @@ export function onEvent(state: RunState, event: RunEvent): RunState {
         ...state,
         phase: 'finished',
         pending: { kind: 'none' },
+        // Kept, so a finished run can close whatever sub-runs they had started (decision 0008).
+        unfinished: state.pending.kind === 'tools' ? state.pending.callIds : [],
         outcome: event.outcome,
         text: event.text,
       };

@@ -81,6 +81,7 @@ describe('onEvent', () => {
       stepResults: [],
       approvals: {},
       attempts: {},
+      unfinished: [],
     });
     expect(first).toMatchObject({
       phase: 'finished',
@@ -122,6 +123,34 @@ describe('onEvent', () => {
     expect(s2.transcript).toHaveLength(s1.transcript.length);
     expect(s2.pending).toEqual({ kind: 'tools', callIds: ['a_1'] });
     expect(s2.stepResults).toEqual([{ callId: 'b_1', result: { ok: true, output: 2 } }]);
+  });
+
+  it('keeps the calls still pending when the run finishes as unfinished', () => {
+    const started: RunEvent = {
+      type: 'runStarted',
+      agent: 'triage',
+      model: 'scripted',
+      input: 'Go',
+      startedAt: 0,
+    };
+    const response = callTools([
+      { name: 'a', input: {} },
+      { name: 'b', input: {} },
+    ]);
+    const cancelled: RunEvent = { type: 'runFinished', outcome: 'cancelled', text: 'Cancelled.' };
+    const mid = fold([
+      started,
+      { type: 'modelResponded', step: 1, response },
+      { type: 'toolFinished', step: 1, callId: 'a_1', result: { ok: true, output: 1 } },
+      cancelled,
+    ]);
+    expect(mid).toMatchObject({
+      phase: 'finished',
+      pending: { kind: 'none' },
+      unfinished: ['b_1'],
+    });
+    // A run that finished waiting on the model, or on nothing, leaves no call unfinished.
+    expect(fold([started, cancelled]).unfinished).toEqual([]);
   });
 
   it('ignores a tool result the state isn’t waiting on, rather than throwing', () => {

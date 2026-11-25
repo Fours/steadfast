@@ -27,4 +27,5 @@ Troupe's records are in `../troupe/docs/decisions/`. Cite them as "Troupe's 0011
 | [0005](0005-model-responses-are-journaled-verbatim.md) | Model responses are journaled verbatim, so runs replay without the model and providers get their own blocks back | Accepted | 1 |
 | [0006](0006-a-sub-agent-is-a-child-run-that-resumes.md) | A sub-agent is a child run, with its own journal, so an interrupted one resumes rather than retrying or reporting "may have run" | Proposed | 2 |
 | [0007](0007-approvals-are-durable-waits-in-the-journal.md) | Approvals are durable waits: the request and the decision are journaled events, and the wait is derived from state | Proposed | 2 |
+| [0008](0008-cancellation-is-journaled-in-every-run.md) | Cancellation is journaled in every run of the tree, and a finished run closes its unfinished sub-runs on recovery | Proposed | 2 |
 | [0009](0009-progress-is-told-to-a-ref.md) | Progress is told to a ref captured by the run's definition: journaled events with their `seq`, and streamed text at most once | Proposed | 2 |

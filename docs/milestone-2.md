@@ -172,7 +172,8 @@ export type DecideReply = { ok: true } | { ok: false; reason: 'notWaiting' | 'un
 Milestone 1's `cancel` finishes the run and stops its children. That leaves a sub-run's journal unfinished forever, since nothing will ever resume it. Milestone 2 journals the end in every run of the tree ([0008](decisions/0008-cancellation-is-journaled-in-every-run.md)).
 
 - **`cancel` cascades by message.** When a run finishes for any reason, it stops its tool calls as before, and tells each live sub-run `cancel`, with the reason `The parent run finished: <outcome>`. Each sub-run journals its own `runFinished` with `cancelled`, tells its own sub-runs, reports, and is then stopped by its parent.
-- **A finished run cleans up on recovery.** `runFinished` keeps the step's pending call ids in state as `unfinished`. When a finished run recovers, it spawns every unfinished delegation's sub-run and tells it `cancel`. One that has already finished reports at once, and is stopped. So a crash between the parent's `runFinished` and a sub-run's can't leave the sub-run open. The cost is a few actors spawned when a finished run is spawned again, which is rare.
+- **A finished run reports once its tree has closed.** It watches the sub-runs it's closing, and reports when the last has terminated, so stopping a sub-run never cuts short the sub-runs under it. One that hasn't closed after 30 s is stopped, and the run reports anyway.
+- **A finished run cleans up on recovery.** `runFinished` keeps the step's pending call ids in state as `unfinished`. When a finished run recovers, it spawns every unfinished delegation's sub-run in closing mode: it cancels itself as soon as it has recovered, and starts nothing first. One that has already finished reports at once, and is stopped. So a crash between the parent's `runFinished` and a sub-run's can't leave the sub-run open. The cost is a few actors spawned when a finished run is spawned again, which is rare.
 - **`cancel` can target a sub-run,** with an optional `runId`, forwarded as `decide` is. Cancelling a sub-run alone finishes it with `cancelled`, and its parent's model sees that as the delegation's error result, and carries on.
 - Cancelling ends pending approvals with the run. A `decide` that arrives afterwards replies `notWaiting`.
 
@@ -283,7 +284,7 @@ and changes:
 - `runStarted` gains `limits`, the ones the run started with.
 - `toolFinished` gains `usage`, for a delegation's result.
 
-`RunState` gains `limits`, `treeUsage`, `approvals` (the current step's, by call id: waiting, approved or denied, with `requestedAt`), and `unfinished`. Snapshots go to version 3 (see the notes from T4). An old journal still folds: `runStarted` without `limits` means none, and `toolFinished` without `usage` adds nothing.
+`RunState` gains `limits`, `treeUsage`, `approvals` (the current step's, by call id: waiting, approved or denied, with `requestedAt`), and `unfinished`. Snapshots go to version 4 (see the notes from T4 and T5). An old journal still folds: `runStarted` without `limits` means none, and `toolFinished` without `usage` adds nothing.
 
 ## Tasks
 
@@ -294,8 +295,8 @@ Do these in order. Each one ends with passing tests.
 | T1. Model calls v2: options, streamed text, `paused`, bad input | Done | 39977ab |
 | T2. Progress | Done | e31342e |
 | T3. Sub-agents and limits | Done | 5128d09 |
-| T4. Approvals | Done | |
-| T5. Cancellation across the tree | Not started | |
+| T4. Approvals | Done | 147f3b8 |
+| T5. Cancellation across the tree | Done | |
 | T6. Streaming and the fallback in the Anthropic adapter | Not started | |
 | T7. The OpenAI adapter | Not started | |
 | T8. startRun, the example and the README | Not started | |
@@ -394,11 +395,21 @@ Notes from T4:
 
 **Done when** tests cover:
 
-- [ ] Cancelling the root of a three-level tree journals `runFinished` with `cancelled` in every run, aborts every tool call's signal, and stops every actor.
-- [ ] A parent that finishes for another reason, such as its deadline, cancels its sub-runs the same way, and says why.
-- [ ] Stopping the system after the root's `runFinished` and before a sub-run's, then spawning the root again, finishes the sub-run with `cancelled`. Checked at each level of the tree.
-- [ ] Cancelling a sub-run alone finishes it with `cancelled`, and its parent's model sees the error result and carries on.
-- [ ] A cancelled run's pending approvals reply `notWaiting` to any decision.
+- [x] Cancelling the root of a three-level tree journals `runFinished` with `cancelled` in every run, aborts every tool call's signal, and stops every actor.
+- [x] A parent that finishes for another reason, such as its deadline, cancels its sub-runs the same way, and says why.
+- [x] Stopping the system after the root's `runFinished` and before a sub-run's, then spawning the root again, finishes the sub-run with `cancelled`. Checked at each level of the tree.
+- [x] Cancelling a sub-run alone finishes it with `cancelled`, and its parent's model sees the error result and carries on.
+- [x] A cancelled run's pending approvals reply `notWaiting` to any decision.
+
+Notes from T5:
+
+- A finished run reports only once every sub-run it's closing has terminated, so a report means the tree under it has closed. Otherwise the parent stopping a sub-run that had just reported would stop that sub-run's own sub-runs before they journaled. The wait is capped at `CLOSE_TIMEOUT_MS`, 30 s, for a sub-run whose journal is down.
+- On recovery, a finished run spawns its unfinished sub-runs in closing mode rather than telling them `cancel` after an ordinary spawn. A sub-run that recovers as `running` would otherwise start its model or tool calls in `onSignal`, before it read the `cancel`. The parent calls `runActor` directly for this, since everything it passes is derived.
+- The "finishes for another reason" test uses `tokensExceeded`. A sub-run inherits its parent's deadline, so at the deadline its own timer fires as well, and it ends `deadlineExceeded`.
+- A decision for one of a cancelled run's own calls replies `notWaiting`. One for a sub-run that has closed replies `unknownRun`, since no live run in the tree has its id.
+- `cancel` for an id with no live run under it changes nothing. It has no reply, as in milestone 1.
+- Snapshots are at version 4, since `RunState` gained `unfinished`.
+- The README's cancellation section is left for T8.
 
 ### T6. Streaming and the fallback in the Anthropic adapter
 
@@ -483,3 +494,4 @@ Each task writes its record as Proposed and fills in the evidence as its tests p
 5. **Who can decide.** `decide` records `by`, but doesn't check it. Authorisation belongs to the app that sends the message. Should a tool be able to name who may approve it, so the journal can show a decision was allowed?
 6. **Context management.** Long runs still outgrow the context window. Anthropic's server-side compaction would fit the append-only transcript, since its blocks come back in `raw`, but a provider-neutral answer needs a design of its own. It needs a milestone, or a place in milestone 4, once the evals can measure it.
 7. **Carried from milestone 1: retrying a tool's failure vs reporting it** (milestone 1's open question 7). Still open. Sub-agents make it sharper, since a sub-run's failure is never retried, only reported.
+8. **A cancelled sub-run's usage is lost to its parent.** The parent's journal has ended by the time the sub-run reports, so its usage never reaches the parent's `treeUsage`, and the root's report undercounts what the tree spent. Should the report add what its closing sub-runs used, though `readRun` can't show it from the journal?

@@ -45,7 +45,9 @@ A tool, or a delegation, takes `needsApproval`: `true`, `false` (the default), o
 
 Each of these makes a test fail: letting `act` start a waiting call, measuring a timeout from now rather than `requestedAt`, not re-arming timers on recovery, not forwarding to sub-runs, taking a decision for a call that's already decided, treating a function that throws as `false`, writing the requests after the response rather than with it, and leaving the tag off.
 
-Still to prove, in T5 and T8: a cancelled run's pending approvals reply `notWaiting`, and the example's `--crash-while-waiting` ends as an uninterrupted run does. This record becomes Accepted then.
+From T5, in `test/run/cancel-tree.test.ts`: a decision for a cancelled run's waiting call replies `notWaiting`, and one for a sub-run that has closed replies `unknownRun`. Neither journal changes.
+
+Still to prove, in T8: the example's `--crash-while-waiting` ends as an uninterrupted run does. This record becomes Accepted then.
 
 ## Consequences
 

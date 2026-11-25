@@ -80,11 +80,22 @@ const SUB_RUN_BACKOFF = supervise.restartWithBackoff({
   randomFactor: 0.2,
 });
 /** Snapshot every this many events. Bump the version whenever `RunState` changes shape. */
-const SNAPSHOTS = { every: 100, version: 3 } as const;
+const SNAPSHOTS = { every: 100, version: 4 } as const;
 /** What the model is told about a tool call that wasn't safe to run again (decision 0003). */
 export const INTERRUPTED = mayHaveRun('The tool was interrupted');
 /** The key of the run's deadline timer. Each call waiting for approval has one of its own. */
 const DEADLINE = 'deadline';
+/**
+ * The key of a finished run's timer while it closes its sub-runs. It's active from the moment
+ * the run starts closing until it reports, so it also says the report hasn't been sent.
+ */
+const CLOSING = 'closing';
+/**
+ * How long a finished run waits for its sub-runs to close before it reports anyway. One whose
+ * journal is down restarts with backoff until it can write, and the run's caller shouldn't wait
+ * on that forever. A sub-run left open is closed the next time the run is spawned.
+ */
+export const CLOSE_TIMEOUT_MS = 30_000;
 
 /** The model-call child's name for a step. */
 export function modelChildName(step: number): string {
@@ -115,17 +126,25 @@ export function statusOf(state: RunState, runId: string, subRuns: readonly SubRu
   };
 }
 
-/** A sub-run the run's state says is working for it, and its child's name. */
-interface LiveSubRun extends SubRun {
+/** A sub-run the run's state says is working for it, with what it needs to start. */
+interface LiveSubRun {
+  readonly agent: Agent;
+  readonly runId: string;
+  readonly task: string;
   readonly callId: string;
   readonly childName: string;
 }
 
-/** The actor definition for one run of `agent`. Made by `agent.run`, which checks its arguments. */
+/**
+ * The actor definition for one run of `agent`. Made by `agent.run`, which checks its arguments.
+ * `closing` is for a sub-run its finished parent spawns only to close it: the reason it's
+ * cancelled with. Such a run starts nothing, and cancels itself as soon as it has recovered.
+ */
 export function runActor(
   agent: Agent,
   runId: string,
   options: RunOptions,
+  closing?: string,
 ): ActorDef<RunMsg, PersistentState<RunState>> {
   const { input, reportTo, progressTo, limits } = options;
   const tools = new Map(agent.tools.map((t) => [t.name, t]));
@@ -162,12 +181,29 @@ export function runActor(
    */
   const act = (state: RunState, ctx: ActorContext<RunMsg>, resuming = false): void => {
     if (state.phase === 'finished') {
-      // Whatever ended the run, nothing it started is wanted any more. Stopping a child aborts its
-      // signal, and anything it reports afterwards is for a run that has finished, so it's ignored.
-      for (const child of ctx.children()) ctx.stop(child);
       // The deadline, and every approval's timeout: a decision can't matter any more.
       ctx.timers.cancelAll();
-      report(state);
+      // Whatever ended the run, nothing it started is wanted any more. Its sub-runs are cancelled,
+      // so each journals its own end (decision 0008). They're spawned to be closed if they aren't
+      // running, which happens when a finished run is spawned again.
+      const reason = `The parent run finished: ${state.outcome ?? 'failed'}`;
+      const closingRefs = subRunsOf(state).map((sub) => {
+        const live = ctx.child(sub.childName) as ActorRef<RunMsg> | undefined;
+        if (live !== undefined) live.tell({ type: 'cancel', reason });
+        const child = live ?? spawnSubRun(state, ctx, sub, reason);
+        ctx.watch(child);
+        return child;
+      });
+      // Every other child is a model or tool call. Stopping one aborts its signal, and anything it
+      // reports afterwards is for a run that has finished, so it's ignored.
+      for (const child of ctx.children()) {
+        if (!closingRefs.includes(child as ActorRef<RunMsg>)) ctx.stop(child);
+      }
+      // The run reports once every sub-run under it has closed, so a report means the whole tree
+      // has ended. Stopping a sub-run any sooner would stop its own sub-runs before they could
+      // journal theirs.
+      if (closingRefs.length === 0) report(state);
+      else ctx.timers.startSingle(CLOSING, { type: 'closingTimedOut' }, CLOSE_TIMEOUT_MS);
       return;
     }
     const { pending } = state;
@@ -222,13 +258,7 @@ export function runActor(
             });
             return;
           }
-          const sub = plan.agent.run(plan.runId, {
-            input: plan.task,
-            reportTo: ctx.self,
-            ...(progressTo === undefined ? {} : { progressTo }),
-            limits: limitsFor(agent.budget, state),
-          });
-          ctx.spawn(sub, name, { supervision: SUB_RUN_BACKOFF });
+          spawnSubRun(state, ctx, { ...plan, childName: name });
           return;
         }
         const name = toolChildName(state.step, call.id, index);
@@ -351,16 +381,24 @@ export function runActor(
 
   /**
    * The sub-runs the state says are working for the run: the current step's pending delegations
-   * that aren't waiting for a decision and can start. Derived as `act` starts them.
+   * that aren't waiting for a decision and can start. Derived as `act` starts them. Once the run
+   * has finished, they're those of its unfinished calls, which it closes.
    */
   const subRunsOf = (state: RunState): LiveSubRun[] => {
     const { pending } = state;
-    if (state.phase !== 'running' || pending.kind !== 'tools') return [];
+    const callIds =
+      state.phase === 'finished'
+        ? state.unfinished
+        : state.phase === 'running' && pending.kind === 'tools'
+          ? pending.callIds
+          : [];
+    if (callIds.length === 0) return [];
     const last = state.transcript.at(-1);
     const calls = last?.role === 'assistant' ? last.response.toolCalls : [];
     const depthLeft = depthLeftOf(agent.budget, state.limits);
     return calls.flatMap((call, index) => {
-      if (!pending.callIds.includes(call.id)) return [];
+      if (!callIds.includes(call.id)) return [];
+      // Never started: it was waiting for a decision.
       if (state.approvals[call.id]?.status === 'waiting') return [];
       const t = tools.get(call.name);
       if (t === undefined || !isDelegation(t)) return [];
@@ -368,13 +406,60 @@ export function runActor(
       if (plan.kind !== 'start') return [];
       return [
         {
-          agent: plan.agent.name,
+          agent: plan.agent,
           runId: plan.runId,
+          task: plan.task,
           callId: call.id,
           childName: subRunChildName(state.step, call.id, index),
         },
       ];
     });
+  };
+
+  /**
+   * Spawns a sub-run as a persistent child, with the limits the run hands down now. One spawned
+   * with `closing` cancels itself with that reason, and starts nothing first.
+   */
+  const spawnSubRun = (
+    state: RunState,
+    ctx: ActorContext<RunMsg>,
+    sub: {
+      readonly agent: Agent;
+      readonly runId: string;
+      readonly task: string;
+      readonly childName: string;
+    },
+    closing?: string,
+  ): ActorRef<RunMsg> => {
+    const subOptions: RunOptions = {
+      input: sub.task,
+      reportTo: ctx.self,
+      ...(progressTo === undefined ? {} : { progressTo }),
+      limits: limitsFor(agent.budget, state),
+    };
+    // Everything here is derived from the journal and checked definitions, so `agent.run`'s
+    // checks would pass. Called directly, since only the run itself may spawn one closing.
+    const def = runActor(sub.agent, sub.runId, subOptions, closing);
+    return ctx.spawn(def, sub.childName, { supervision: SUB_RUN_BACKOFF });
+  };
+
+  /** The live child of the sub-run `target` is, or is under, if there's one. */
+  const subRunFor = (state: RunState, ctx: Ctx, target: string): ActorRef<RunMsg> | undefined => {
+    const sub = subRunsOf(state).find(
+      (r) => target === r.runId || target.startsWith(`${r.runId}/`),
+    );
+    // The child of a sub-run's name is always that sub-run's actor, spawned by `act`.
+    return sub === undefined
+      ? undefined
+      : (ctx.child(sub.childName) as ActorRef<RunMsg> | undefined);
+  };
+
+  /** Reports a finished run that was closing its sub-runs, once they've all closed or it gave up. */
+  const closed = (state: RunState, ctx: ActorContext<RunMsg>): void => {
+    // Not active once the run has reported, so a late signal can't report twice.
+    if (!ctx.timers.isActive(CLOSING)) return;
+    ctx.timers.cancel(CLOSING);
+    report(state);
   };
 
   /**
@@ -413,15 +498,13 @@ export function runActor(
 
   const onCommand = (state: RunState, msg: RunMsg, ctx: Ctx): Effect<RunEvent, RunState> => {
     switch (msg.type) {
-      case 'status':
-        return ctx.reply(
-          msg.replyTo,
-          statusOf(
-            state,
-            runId,
-            subRunsOf(state).map((r) => ({ agent: r.agent, runId: r.runId })),
-          ),
-        );
+      case 'status': {
+        // A finished run's are the ones it's still closing.
+        const subRuns = subRunsOf(state)
+          .filter((r) => state.phase !== 'finished' || ctx.child(r.childName) !== undefined)
+          .map((r): SubRun => ({ agent: r.agent.name, runId: r.runId }));
+        return ctx.reply(msg.replyTo, statusOf(state, runId, subRuns));
+      }
       case 'decide': {
         const reply = (r: DecideReply): void => {
           msg.replyTo?.tell(r);
@@ -429,13 +512,9 @@ export function runActor(
         if (msg.runId !== runId) {
           // For a run under this one: the sub-run whose id the target is, or starts. So a caller
           // only ever needs the root's ref.
-          const sub = subRunsOf(state).find(
-            (r) => msg.runId === r.runId || msg.runId.startsWith(`${r.runId}/`),
-          );
-          const child = sub === undefined ? undefined : ctx.child(sub.childName);
-          // The child of a sub-run's name is always that sub-run's actor, spawned by `act`.
+          const child = subRunFor(state, ctx, msg.runId);
           if (child === undefined) reply({ ok: false, reason: 'unknownRun' });
-          else (child as ActorRef<RunMsg>).tell(msg);
+          else child.tell(msg);
           return ctx.none();
         }
         // The first decision wins. Anything after it, or for a call never asked about, changes
@@ -488,12 +567,29 @@ export function runActor(
           if (armDeadline(next, ctx)) act(next, ctx);
         });
       case 'cancel': {
+        if (msg.runId !== undefined && msg.runId !== runId) {
+          // For a run under this one, forwarded as `decide` is. Its parent hears how it ended as
+          // the delegation's result, and carries on.
+          subRunFor(state, ctx, msg.runId)?.tell(msg);
+          return ctx.none();
+        }
         if (state.phase === 'finished') return ctx.none();
         const cancelled = finished({ outcome: 'cancelled', text: `Cancelled: ${msg.reason}` });
         // A run cancelled before it started still starts, so its journal says what was cancelled,
         // but it never calls the model: both facts are one write.
         if (state.phase === 'new') return persistThenAct(ctx, started(), cancelled);
         return persistThenAct(ctx, cancelled);
+      }
+      case 'closingTimedOut': {
+        // Some sub-run hasn't closed in time. It's stopped, and closed the next time this run is
+        // spawned, since its call is still among the unfinished.
+        for (const sub of subRunsOf(state)) {
+          const child = ctx.child(sub.childName);
+          if (child !== undefined) ctx.stop(child);
+        }
+        // The timer has fired, so it's no longer active: report directly.
+        if (state.phase === 'finished') report(state);
+        return ctx.none();
       }
       case 'deadline':
         if (
@@ -551,6 +647,13 @@ export function runActor(
         // from the journal. A report for a call the run isn't waiting on changes nothing.
         const call = subRunsOf(state).find((r) => r.runId === msg.runId);
         if (call === undefined) return ctx.none();
+        if (state.phase === 'finished') {
+          // One the run is closing. It reports once its own tree has closed, so it can be stopped
+          // now, and the run hears when it has terminated.
+          const child = ctx.child(call.childName);
+          if (child !== undefined) ctx.stop(child);
+          return ctx.none();
+        }
         const done: RunEvent = {
           type: 'toolFinished',
           step: state.step,
@@ -619,10 +722,23 @@ export function runActor(
     tags: (event) =>
       event.type === 'approvalRequested' || event.type === 'approvalDecided' ? [APPROVAL_TAG] : [],
     onSignal(state, signal, ctx) {
+      if (signal.type === 'terminated') {
+        // Only sub-runs being closed are watched. The last one to go lets the run report.
+        if (state.phase !== 'finished') return;
+        const open = subRunsOf(state).some((r) => ctx.child(r.childName) !== undefined);
+        if (!open) closed(state, ctx);
+        return;
+      }
       if (signal.type !== 'recoveryCompleted') return;
       // First, on every spawn, so a listener knows which events it will hear and which are in the
       // journal already. A new run has recovered nothing, at seq 0.
       progress({ type: 'resumed', runId, seq: signal.seq });
+      if (closing !== undefined && state.phase !== 'finished') {
+        // Spawned only to be closed: nothing starts, so no call is made again just to be stopped.
+        // A run that hadn't started still journals its start, as any cancelled run does.
+        ctx.self.tell({ type: 'cancel', reason: closing });
+        return;
+      }
       // onSignal can't persist, so starting is a command the run sends itself. Anything sent
       // during recovery is ahead of it in the mailbox, and sees the phase as `new`.
       if (state.phase === 'new') {

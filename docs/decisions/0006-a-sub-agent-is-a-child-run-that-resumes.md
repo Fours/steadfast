@@ -41,7 +41,9 @@ An agent should be able to hand part of its task to another agent, such as a tri
 
 Each of these makes a test fail: leaving the index out of the sub-run's id, reporting a pending delegation as interrupted on recovery, leaving the usage off `toolFinished`, not handing the deadline down, not stopping the sub-run after its report, and not checking tokens after a report.
 
-Still to prove, in T5 and T8: cancellation reaches every run of the tree, and the example's analyst resumes after a crash. This record becomes Accepted then.
+From T5, in `test/run/cancel-tree.test.ts`: cancellation reaches every run of a three-level tree, and each journals its end. A finished root that is spawned again closes the sub-runs it left open (decision 0008).
+
+Still to prove, in T8: the example's analyst resumes after a crash. This record becomes Accepted then.
 
 ## Consequences
 
@@ -49,5 +51,5 @@ Still to prove, in T5 and T8: cancellation reaches every run of the tree, and th
 - A sub-run's failure is reported, never retried, as its own journal already holds what it tried. That sharpens milestone 1's open question 7.
 - Sub-runs started in the same step each get what was left of `maxTokens` when they start, so together they can overshoot it (open question 4).
 - A parent's deadline is read on its sub-agent's clock. Agents in one tree should share a clock.
-- Until T5, a parent that finishes stops its live sub-runs without journaling their end.
+- A parent that finishes cancels its live sub-runs, and each journals its end (decision 0008).
 - An agent can't delegate to an agent of its own name, since its sub-runs would read as the same agent in every journal. Indirect cycles are bounded by depth.
