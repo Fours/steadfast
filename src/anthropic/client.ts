@@ -1,6 +1,7 @@
-// The Anthropic client, typed structurally by the one method the adapter calls (decision 0004).
-// Steadfast never imports the SDK: anything whose `beta.messages.create` accepts these params and
-// resolves to this message shape works, and a type test proves `new Anthropic()` does. Fields the
+// The Anthropic client, typed structurally by the two methods the adapter calls (decision 0004).
+// Steadfast never imports the SDK: anything whose `beta.messages.create` and `beta.messages.stream`
+// accept these params and give this message shape works, and a type test proves `new Anthropic()`
+// does. Fields the
 // adapter doesn't fill in are typed as loosely as the SDK's own, so a newer SDK still fits.
 
 /** One message of a request, as the Messages API takes it. */
@@ -32,7 +33,7 @@ export interface AnthropicRequestOptions {
 
 /** A Messages API response: the fields the adapter reads. */
 export interface AnthropicMessage {
-  /** The provider's content blocks, kept verbatim as the response's `raw` (decision 0005). */
+  /** The provider's content blocks, journaled verbatim as the response's `raw` (decision 0010). */
   readonly content: readonly unknown[];
   readonly stop_reason: string | null;
   /** The model that answered, which a fallback can change. */
@@ -45,7 +46,17 @@ export interface AnthropicMessage {
   };
 }
 
-/** Anything with the SDK's `beta.messages.create`, such as `new Anthropic()`. */
+/** A streaming response, as `beta.messages.stream()` returns it: the members the adapter uses. */
+export interface AnthropicMessageStream {
+  /** Listens for each piece of visible text as it's generated. */
+  on(event: 'text', listener: (textDelta: string) => void): unknown;
+  /** The whole message once the stream ends. Rejects if the stream fails or is aborted. */
+  finalMessage(): PromiseLike<AnthropicMessage>;
+  /** Stops the stream, so `finalMessage()` rejects. */
+  abort(): void;
+}
+
+/** Anything with the SDK's `beta.messages.create` and `beta.messages.stream`, such as `new Anthropic()`. */
 export interface AnthropicClient {
   readonly beta: {
     readonly messages: {
@@ -53,6 +64,10 @@ export interface AnthropicClient {
         params: AnthropicCreateParams,
         options: AnthropicRequestOptions,
       ): PromiseLike<AnthropicMessage>;
+      stream(
+        params: AnthropicCreateParams,
+        options: AnthropicRequestOptions,
+      ): AnthropicMessageStream;
     };
   };
 }

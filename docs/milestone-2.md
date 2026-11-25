@@ -421,12 +421,20 @@ Notes from T5:
 
 **Done when** tests cover, with a fake client and no network:
 
-- [ ] Text deltas reach `onText` in order, and the response is mapped from `finalMessage()`.
-- [ ] Aborting the signal aborts the stream.
-- [ ] A response with a mid-output fallback journals `raw` exactly as it came, and goes back with the blocks the rule leaves out removed, and everything else, the `fallback` block included, in place.
-- [ ] `text` and `toolCalls` come only from blocks after the last `fallback` block.
-- [ ] Server tools reach the request as written, and their blocks go back unchanged.
-- [ ] Type test: `new Anthropic()` still fits the structural client type, `stream` included.
+- [x] Text deltas reach `onText` in order, and the response is mapped from `finalMessage()`.
+- [x] Aborting the signal aborts the stream.
+- [x] A response with a mid-output fallback journals `raw` exactly as it came, and goes back with the blocks the rule leaves out removed, and everything else, the `fallback` block included, in place.
+- [x] `text` and `toolCalls` come only from blocks after the last `fallback` block.
+- [x] Server tools reach the request as written, and their blocks go back unchanged.
+- [x] Type test: `new Anthropic()` still fits the structural client type, `stream` included.
+
+Notes from T6:
+
+- Anthropic's guide also drops `connector_text` before the last `fallback` block, which the design above leaves out. The adapter follows the guide, and [0010](decisions/0010-adapters-apply-their-providers-resend-rules.md) cites it. Blocks the guide doesn't name, such as `mcp_tool_use`, are kept.
+- The default `maxTokens` is 64,000 when streaming and 16,000 with `stream: false`. An explicit `maxTokens` wins either way.
+- The client must have both `create` and `stream`, at runtime as in its type, whichever mode is used.
+- Aborting the signal calls the stream's `abort()`, as well as passing the signal to the client.
+- `README.md` now gives the new defaults and links 0010. Its streaming section is still for T8.
 
 ### T7. The OpenAI adapter
 
@@ -495,3 +503,4 @@ Each task writes its record as Proposed and fills in the evidence as its tests p
 6. **Context management.** Long runs still outgrow the context window. Anthropic's server-side compaction would fit the append-only transcript, since its blocks come back in `raw`, but a provider-neutral answer needs a design of its own. It needs a milestone, or a place in milestone 4, once the evals can measure it.
 7. **Carried from milestone 1: retrying a tool's failure vs reporting it** (milestone 1's open question 7). Still open. Sub-agents make it sharper, since a sub-run's failure is never retried, only reported.
 8. **A cancelled sub-run's usage is lost to its parent.** The parent's journal has ended by the time the sub-run reports, so its usage never reaches the parent's `treeUsage`, and the root's report undercounts what the tree spent. Should the report add what its closing sub-runs used, though `readRun` can't show it from the journal?
+9. **A streamed preview of declined text.** When a fallback happens mid-output, the declined model's partial text has already reached `onText` before the `fallback` block arrives, so a UI shows text the response then sets aside. `attempt` doesn't help, since it's the same attempt. A progress signal that tells a UI to clear the preview, sent when a `fallback` block starts, would fix it, but needs the adapter to report more than text through `onText`.

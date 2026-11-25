@@ -164,10 +164,10 @@ import { anthropicModel } from '@kylewillett/steadfast/anthropic';
 const model = anthropicModel({ client: new Anthropic(), effort: 'high' });
 ```
 
-`@kylewillett/steadfast/anthropic` is an adapter for Claude's Messages API. Steadfast never imports the SDK: `client` is anything with the SDK's `beta.messages.create`, and `@anthropic-ai/sdk` is an optional peer dependency.
+`@kylewillett/steadfast/anthropic` is an adapter for Claude's Messages API. Steadfast never imports the SDK: `client` is anything with the SDK's `beta.messages.create` and `beta.messages.stream`, and `@anthropic-ai/sdk` is an optional peer dependency.
 
-- **Defaults:** `claude-opus-5-5`, 16,000 output tokens, `effort: 'high'`, the model's default thinking, and no streaming. Each is an option.
-- **Responses go back verbatim.** Each response's content is journaled as it came, and sent back exactly so, thinking blocks included ([0005](docs/decisions/0005-model-responses-are-journaled-verbatim.md)).
+- **Defaults:** `claude-opus-5-5`, streamed, 64,000 output tokens (16,000 with `stream: false`), `effort: 'high'`, and the model's default thinking. Each is an option, and `serverTools` passes Anthropic's server tools through as written.
+- **Responses are journaled verbatim.** Each response's content is journaled as it came, and sent back as it came, thinking blocks included. The one exception is the API's own rule for a turn with a refusal fallback in it, which the adapter applies as it sends the turn back ([0010](docs/decisions/0010-adapters-apply-their-providers-resend-rules.md)).
 - **Retries belong to the run.** The SDK's own retries are off, so every attempt is supervised and journaled. Errors are retryable for a 408, 409, 429, 5xx or a lost connection, or as the API's `x-should-retry` says, and `retry-after` becomes `retryAfterMs`.
 
 > **The refusal fallback is on by default.** Requests use the `server-side-fallback-2026-07-01` beta with `fallbacks: 'default'`, so a request a safety classifier declines is retried on a fallback model in the same call. That changes which model may answer, which each response's `model` records, and how a declined request is billed. Pass `fallbacks: false` to turn it off. A response that still refuses finishes the run with `refused`.

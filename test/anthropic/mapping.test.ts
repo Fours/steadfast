@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   FALLBACK_BETA,
   fromMessage,
+  resendable,
   toParams,
   type RequestSettings,
 } from '../../src/anthropic/mapping.ts';
@@ -14,6 +15,7 @@ const settings: RequestSettings = {
   maxTokens: 16_000,
   effort: 'high',
   fallbacks: 'default',
+  serverTools: [],
 };
 
 // Content as Claude sends it, with blocks Steadfast doesn't read: they must go back unchanged.
@@ -261,5 +263,177 @@ describe('fromMessage', () => {
     expect(() =>
       fromMessage(message([], 'end_turn', { usage: { input_tokens: -1, output_tokens: 0 } })),
     ).toThrow(/usage.input_tokens/);
+  });
+});
+
+// A streamed response where the requested model declined partway and a fallback model finished.
+// Each block before the fallback is labelled with what the resend rule does to it.
+const fallbackBlock = {
+  type: 'fallback',
+  from: { model: 'claude-opus-5-5' },
+  to: { model: 'claude-opus-4-8' },
+  trigger: { type: 'refusal', category: 'cyber' },
+};
+const declinedThinking = { type: 'thinking', thinking: '', signature: 'sig-declined' };
+const declinedRedacted = { type: 'redacted_thinking', data: 'opaque' };
+const declinedConnector = { type: 'connector_text', text: 'from a connector' };
+const declinedText = { type: 'text', text: 'Step one is to ' };
+const pairedSearch = {
+  type: 'server_tool_use',
+  id: 'srvtoolu_1',
+  name: 'web_search',
+  input: { query: 'cve' },
+};
+const pairedResult = { type: 'web_search_tool_result', tool_use_id: 'srvtoolu_1', content: [] };
+const unpairedSearch = {
+  type: 'server_tool_use',
+  id: 'srvtoolu_2',
+  name: 'web_search',
+  input: { query: 'exploit' },
+};
+const declinedToolUse = { type: 'tool_use', id: 'toolu_declined', name: 'read_log', input: {} };
+const answerThinking = { type: 'thinking', thinking: '', signature: 'sig-fallback' };
+const answerText = { type: 'text', text: 'I can help with the defensive part.' };
+const answerToolUse = {
+  type: 'tool_use',
+  id: 'toolu_answer',
+  name: 'read_log',
+  input: { service: 'auth' },
+};
+const midOutput = [
+  declinedThinking,
+  declinedRedacted,
+  declinedConnector,
+  declinedText,
+  pairedSearch,
+  pairedResult,
+  unpairedSearch,
+  declinedToolUse,
+  fallbackBlock,
+  answerThinking,
+  answerText,
+  answerToolUse,
+];
+
+describe('a response with a fallback', () => {
+  it('keeps raw exactly as it came', () => {
+    const response = fromMessage(message(midOutput, 'tool_use', { model: 'claude-opus-4-8' }));
+    expect(response.raw).toEqual(midOutput);
+    expect(response.model).toBe('claude-opus-4-8');
+  });
+
+  it('reads text and tool calls only from blocks after the last fallback block', () => {
+    const response = fromMessage(message(midOutput, 'tool_use'));
+    expect(response.text).toBe('I can help with the defensive part.');
+    expect(response.toolCalls).toEqual([
+      { id: 'toolu_answer', name: 'read_log', input: { service: 'auth' } },
+    ]);
+
+    const twice = fromMessage(
+      message([
+        { type: 'text', text: 'first ' },
+        fallbackBlock,
+        { type: 'text', text: 'second ' },
+        fallbackBlock,
+        { type: 'text', text: 'third' },
+      ]),
+    );
+    expect(twice.text).toBe('third');
+  });
+
+  it('goes back with the blocks the rule leaves out removed, and the rest in place', () => {
+    expect(resendable(midOutput)).toEqual([
+      declinedText,
+      pairedSearch,
+      pairedResult,
+      fallbackBlock,
+      answerThinking,
+      answerText,
+      answerToolUse,
+    ]);
+  });
+
+  it('applies the rule only before the last fallback block, keeping every fallback block', () => {
+    const content = [
+      declinedThinking,
+      { type: 'text', text: 'a' },
+      fallbackBlock,
+      declinedRedacted,
+      { type: 'text', text: 'b' },
+      fallbackBlock,
+      answerThinking,
+      unpairedSearch,
+      answerText,
+    ];
+    expect(resendable(content)).toEqual([
+      { type: 'text', text: 'a' },
+      fallbackBlock,
+      { type: 'text', text: 'b' },
+      fallbackBlock,
+      answerThinking,
+      unpairedSearch,
+      answerText,
+    ]);
+  });
+
+  it("sends a turn back through the rule, from the response's raw", () => {
+    const response = fromMessage(message(midOutput, 'tool_use'));
+    const params = toParams(
+      {
+        system: '',
+        transcript: [
+          { role: 'user', text: 'Audit the auth service.' },
+          { role: 'assistant', response },
+        ],
+        tools: [],
+      },
+      settings,
+    );
+    expect(params.messages[1]).toEqual({ role: 'assistant', content: resendable(midOutput) });
+    // The journaled response is untouched by the mapping.
+    expect(response.raw).toEqual(midOutput);
+  });
+
+  it('leaves a turn with no fallback block as the very array it came as', () => {
+    expect(resendable(content)).toBe(content);
+  });
+});
+
+describe('server tools', () => {
+  const webSearch = { type: 'web_search_20260318', name: 'web_search', max_uses: 3 };
+
+  it('reach the request as written, after the agent tools', () => {
+    const params = toParams(request, { ...settings, serverTools: [webSearch] });
+    expect(params.tools).toEqual([
+      {
+        name: 'read_log',
+        description: 'Reads a log.',
+        input_schema: { type: 'object', properties: { service: { type: 'string' } } },
+      },
+      webSearch,
+    ]);
+    const alone = toParams(
+      { system: '', transcript: [{ role: 'user', text: 'hi' }], tools: [] },
+      { ...settings, serverTools: [webSearch] },
+    );
+    expect(alone.tools).toEqual([webSearch]);
+  });
+
+  it('come back in raw, and their blocks go back unchanged', () => {
+    const blocks = [pairedSearch, pairedResult, unpairedSearch, answerText];
+    const response = fromMessage(message(blocks, 'pause_turn'));
+    expect(response.raw).toEqual(blocks);
+    const params = toParams(
+      {
+        system: '',
+        transcript: [
+          { role: 'user', text: 'Search.' },
+          { role: 'assistant', response },
+        ],
+        tools: [],
+      },
+      { ...settings, serverTools: [webSearch] },
+    );
+    expect(params.messages[1]?.content).toBe(response.raw);
   });
 });

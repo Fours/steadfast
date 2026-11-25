@@ -35,7 +35,7 @@ The angles Steadfast leans into:
 - **Model and tool calls run in supervised child actors**, and the run only persists their results ([0002](decisions/0002-steps-run-in-supervised-children.md)).
 - **An unfinished step is retried on recovery when it's safe to repeat**, and reported to the model when it isn't ([0003](decisions/0003-unfinished-steps-retry-only-when-safe.md)).
 - **Built on Troupe, with no other runtime dependencies.** Providers are adapters over structurally typed clients ([0004](decisions/0004-built-on-troupe-with-no-other-dependencies.md)).
-- **Model responses are journaled verbatim**, so runs replay without the model and providers get their own blocks back unchanged ([0005](decisions/0005-model-responses-are-journaled-verbatim.md)).
+- **Model responses are journaled verbatim**, so runs replay without the model and providers get their own blocks back, under only their own rules for resending them ([0010](decisions/0010-adapters-apply-their-providers-resend-rules.md), superseding [0005](decisions/0005-model-responses-are-journaled-verbatim.md)).
 
 All five are Proposed until milestone 1 proves them.
 

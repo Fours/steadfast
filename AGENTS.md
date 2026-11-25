@@ -50,7 +50,7 @@ Before you say a task is done, run lint, typecheck, test, coverage and build, an
 - **Time, scheduling and chance are injected.** Read time through Troupe's scheduler (`ctx.now()`) or an injected clock, schedule through actor timers, and draw chance from the system's random. Never call `Date.now()`, `setTimeout` or `Math.random()` in `src/`.
 - **The journal is the run** ([0001](docs/decisions/0001-a-run-is-a-persistent-actor.md)). Everything a run learns from the outside world, every model response and tool result, is an event before the run acts on it. `onEvent` stays pure.
 - **Side effects happen in children** ([0002](docs/decisions/0002-steps-run-in-supervised-children.md)). The run actor never calls a model or a tool itself.
-- **Model responses are kept verbatim** ([0005](docs/decisions/0005-model-responses-are-journaled-verbatim.md)). Never rewrite, trim or reorder a provider's content blocks: they go back to the provider exactly as they came.
+- **Model responses are journaled verbatim** ([0010](docs/decisions/0010-adapters-apply-their-providers-resend-rules.md), superseding [0005](docs/decisions/0005-model-responses-are-journaled-verbatim.md)). Never rewrite, trim or reorder a provider's content blocks in `raw` or the journal. They go back to the provider as they came, except where the provider documents a rule for resending them, which the adapter applies when it maps a turn back, citing the rule.
 - **Providers are adapters over structurally typed clients.** Steadfast never imports a provider SDK at runtime. An adapter's SDK is an optional peer dependency, imported only from that adapter's entry point.
 - Invalid options throw when they're passed in, never later.
 

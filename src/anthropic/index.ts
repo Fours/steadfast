@@ -4,6 +4,7 @@ export type {
   AnthropicClient,
   AnthropicCreateParams,
   AnthropicMessage,
+  AnthropicMessageStream,
   AnthropicMessageParam,
   AnthropicRequestOptions,
 } from './client.js';
@@ -11,5 +12,6 @@ export {
   anthropicModel,
   type AnthropicEffort,
   type AnthropicModelOptions,
+  type AnthropicServerTool,
   type AnthropicThinking,
 } from './model.js';

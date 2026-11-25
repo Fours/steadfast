@@ -1,6 +1,6 @@
 # 0005. Model responses are journaled verbatim, so runs replay without the model and providers get their own blocks back
 
-- **Status:** Accepted
+- **Status:** Superseded by [0010](0010-adapters-apply-their-providers-resend-rules.md)
 - **Date:** 2026-11-24
 - **Milestone:** 1
 
