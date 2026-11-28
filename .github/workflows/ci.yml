@@ -26,6 +26,7 @@ jobs:
       # Enforces the 90% line threshold on src/.
       - run: npm run coverage
       - run: npm run build
-      # The incident-triage example on the scripted model, against dist/: a clean run, a crash
-      # after step 3 and its resume, a crash during page_oncall and its resume, and --show.
+      # The incident-triage example on the scripted models, against dist/: approved and denied
+      # pages, crashes while an approval waits, inside the log analyst and during page_oncall,
+      # each with its resume, --cancel-after 2, and --show printing the tree.
       - run: npm run example:check

@@ -67,3 +67,4 @@ export {
   type TimelineSubRun,
   type TimelineToolCall,
 } from './read-run.js';
+export { startRun, type Decision, type RunHandle, type StartRunOptions } from './start-run.js';

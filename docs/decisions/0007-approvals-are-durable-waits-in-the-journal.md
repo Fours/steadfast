@@ -1,6 +1,6 @@
 # 0007. Approvals are durable waits: the request and the decision are journaled, and the wait is derived from state
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-25
 - **Milestone:** 2
 
@@ -47,7 +47,7 @@ Each of these makes a test fail: letting `act` start a waiting call, measuring a
 
 From T5, in `test/run/cancel-tree.test.ts`: a decision for a cancelled run's waiting call replies `notWaiting`, and one for a sub-run that has closed replies `unknownRun`. Neither journal changes.
 
-Still to prove, in T8: the example's `--crash-while-waiting` ends as an uninterrupted run does. This record becomes Accepted then.
+**T8 (2026-11-27):** `scripts/check-example.ts`: `--crash-while-waiting` kills the example with exit code 137 as soon as `approvalRequested` is journaled. Run again, the example reads the journal up to the run's `resumed` seq, finds the same request still waiting, and decides it. The only model call is step 5's, after the decision. The two processes' narration equals an uninterrupted run's, and the page goes out once. `--approve no` journals the denial, never runs `page_oncall`, and the model finishes `completed` saying the page was denied. `test/start-run.test.ts`: `startRun`'s `decide` resolves `ok`, `notWaiting` and `unknownRun` as the run replies, and `notWaiting` once the run is done.
 
 ## Consequences
 

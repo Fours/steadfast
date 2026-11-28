@@ -1,6 +1,6 @@
-// The triage agent's three tools, over a fake checkout outage: a payments deploy at 14:02 shrank
-// the database connection pool, payments started timing out, and checkout returns 502s. Reading
-// logs and metrics is safe to repeat. Paging someone isn't.
+// The example's tools, over a fake checkout outage: a payments deploy at 14:02 shrank the database
+// connection pool, payments started timing out, and checkout returns 502s. Reading logs and
+// metrics is safe to repeat. Paging someone isn't, so it needs a person's approval too.
 
 import { tool, type Tool } from '@kylewillett/steadfast';
 
@@ -48,8 +48,15 @@ export interface ToolOptions {
   readonly afterPage?: () => void;
 }
 
-/** The agent's tools. */
-export function triageTools(options: ToolOptions = {}): readonly Tool[] {
+/** The example's tools: the log analyst's `readLog`, and the triage agent's other two. */
+export interface Tools {
+  readonly readLog: Tool;
+  readonly queryMetrics: Tool;
+  readonly pageOncall: Tool;
+}
+
+/** The example's tools. */
+export function exampleTools(options: ToolOptions = {}): Tools {
   const readLog = tool({
     name: 'read_log',
     description: 'Read the last lines of a service log.',
@@ -92,6 +99,10 @@ export function triageTools(options: ToolOptions = {}): readonly Tool[] {
       required: ['team', 'summary'],
       additionalProperties: false,
     },
+    // A person approves each page before it goes out, and has ten minutes to decide. The run's
+    // deadline is fifteen, so a page nobody answers still leaves the model time to say so.
+    needsApproval: true,
+    approvalTimeoutMs: 10 * 60_000,
     // Not idempotent: a page sent twice wakes someone twice. After a crash it isn't run again,
     // and the model is told it may or may not have gone out.
     run: ({ team, summary }: PageInput, { idempotencyKey }) => {
@@ -101,5 +112,5 @@ export function triageTools(options: ToolOptions = {}): readonly Tool[] {
     },
   });
 
-  return [readLog, queryMetrics, pageOncall];
+  return { readLog, queryMetrics, pageOncall };
 }

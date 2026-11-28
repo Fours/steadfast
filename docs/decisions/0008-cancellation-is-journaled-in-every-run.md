@@ -1,6 +1,6 @@
 # 0008. Cancellation is journaled in every run of the tree, and a finished run closes its unfinished sub-runs on recovery
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-25
 - **Milestone:** 2
 
@@ -45,7 +45,7 @@ Each of these makes a test fail: stopping sub-runs instead of cancelling them, r
 
 A sub-run inherits its parent's deadline, so at a deadline its own timer fires too, and it ends with `deadlineExceeded` rather than `cancelled`. That's why the tests use `tokensExceeded` as the other reason to finish.
 
-Still to prove, in T8: the example's `--cancel-after 2` leaves both journals ending in `cancelled`. This record becomes Accepted then.
+**T8 (2026-11-27):** `scripts/check-example.ts`: `--cancel-after 2` cancels the example's run once the log analyst's first step is journaled, through `startRun`'s `cancel`. `--show` then prints both journals as a tree, the analyst's under step 2, and each ends in `finished: cancelled`. `test/start-run.test.ts`: `cancel` aborts the analyst's held tool and ends both journals in `cancelled`, and `cancel` with the analyst's `runId` cancels it alone while the root completes.
 
 ## Consequences
 

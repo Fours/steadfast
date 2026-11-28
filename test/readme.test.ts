@@ -1,4 +1,4 @@
-// T7: the README's examples type-check. Each `ts` block is compiled as its own module, against
+// Milestone 1's T7 and milestone 2's T8: the README's examples type-check. Each `ts` block is compiled as its own module, against
 // src/ through tsconfig.json's paths, so the README can't drift from the API. A block may use the
 // few helpers the prelude declares, which stand for the reader's own code.
 
@@ -25,7 +25,12 @@ declare const pager: {
   ): Promise<{ pageId: string }>;
 };
 declare const readLog: import('@kylewillett/steadfast').Tool;
+declare const queryMetrics: import('@kylewillett/steadfast').Tool;
+declare const pageOncall: import('@kylewillett/steadfast').Tool;
 declare const triage: import('@kylewillett/steadfast').Agent;
+declare const model: import('@kylewillett/steadfast').Model;
+declare const persistence: import('@kylewillett/troupe/persistence').Persistence;
+declare const system: import('@kylewillett/troupe').ActorSystem;
 `;
 
 /** The README's TypeScript blocks, in order. */
@@ -67,7 +72,7 @@ describe('the README', () => {
   const found = blocks(readFileSync(join(ROOT, 'README.md'), 'utf8'));
 
   it('has its examples', () => {
-    expect(found.length).toBeGreaterThanOrEqual(5);
+    expect(found.length).toBeGreaterThanOrEqual(11);
   });
 
   it('type-checks every TypeScript example', () => {

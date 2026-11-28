@@ -299,8 +299,8 @@ Do these in order. Each one ends with passing tests.
 | T4. Approvals | Done | 147f3b8 |
 | T5. Cancellation across the tree | Done | 7556953 |
 | T6. Streaming and the fallback in the Anthropic adapter | Done | 887c3b9 |
-| T7. The OpenAI adapter | Done | |
-| T8. startRun, the example and the README | Not started | |
+| T7. The OpenAI adapter | Done | 6b2ec6a |
+| T8. startRun, the example and the README | Done | |
 
 ### T1. Model calls v2: options, streamed text, `paused`, bad input
 
@@ -473,11 +473,21 @@ Notes from T7:
 
 **Done when:**
 
-- [ ] `startRun`'s `done` settles with the report, `cancel` cancels, and `decide` replies, in tests on the testkit.
-- [ ] `npm run example` runs to `completed` with `--approve yes`, and with `--approve no` the model is told and finishes without paging.
-- [ ] `--crash-while-waiting` and a second run end the same way as an uninterrupted run, with no extra model call.
-- [ ] `--cancel-after 2` leaves both journals ending in `cancelled`, and `--show` prints them as a tree.
-- [ ] The README's examples type-check, in the test that compiles them.
+- [x] `startRun`'s `done` settles with the report, `cancel` cancels, and `decide` replies, in tests on the testkit.
+- [x] `npm run example` runs to `completed` with `--approve yes`, and with `--approve no` the model is told and finishes without paging.
+- [x] `--crash-while-waiting` and a second run end the same way as an uninterrupted run, with no extra model call.
+- [x] `--cancel-after 2` leaves both journals ending in `cancelled`, and `--show` prints them as a tree.
+- [x] The README's examples type-check, in the test that compiles them.
+
+Notes from T8:
+
+- `startRun` is `src/start-run.ts`, tested in `test/start-run.test.ts`. Once `done` has settled, the host has stopped the run, so `cancel` does nothing and `decide` resolves `notWaiting`. `done` rejects if the run stops without reporting, such as when the system terminates, and a second `startRun` of a live run throws until then. An `onProgress` that throws is logged, and the run carries on.
+- `--crash-after N` and `--cancel-after N` count steps finished across the tree, in the order they finish, where milestone 1's `--crash-after` counted the root's alone. So `--cancel-after 2` lands while the analyst works, after its first step, and `--crash-after 3` crashes inside it, which is the evidence 0006 asked for.
+- The rate-limited model call moved from step 2 to step 3, since step 2 is now the delegation.
+- On `resumed`, the example reads the run's journal up to its `seq` to find a call still waiting for approval, which is how a UI joining late learns what's pending.
+- Decisions are made `by: 'operator'`, so the output is the same on every machine. Without `--approve`, the example asks at the terminal, and when stdin isn't a terminal it refuses to start.
+- `--model openai` reads the model from `OPENAI_MODEL`, since the adapter has no default.
+- Open question 2 is answered for now: the example's ten-minute approval timeout fits in its fifteen-minute deadline, and a wall-clock deadline was the less surprising of the two. The README says to give an agent that waits on people a deadline longer than its approval timeouts.
 
 ## Definition of done
 
@@ -506,7 +516,7 @@ Each task writes its record as Proposed and fills in the evidence as its tests p
 ## Open questions
 
 1. **Troupe.** Nothing here looks like it needs a change to Troupe: persistent children, `thenRun` with `lastSeq`, tags, projections and keyed timers cover it. If a task finds otherwise, raise it with Troupe before working around it, as milestone 1 did with 0038 and 0041.
-2. **Should waiting on people pause the deadline?** Here the deadline is wall-clock time from the start, so an agent that waits a day for approval needs a deadline over a day. Pausing it while every pending call is waiting on a person would match what callers mean by "too long", but makes the deadline harder to explain and test. Decide when the example shows which is less surprising.
+2. **Should waiting on people pause the deadline?** Here the deadline is wall-clock time from the start, so an agent that waits a day for approval needs a deadline over a day. Pausing it while every pending call is waiting on a person would match what callers mean by "too long", but makes the deadline harder to explain and test. Decide when the example shows which is less surprising. **Answered for now in T8:** no, the deadline stays wall-clock time. Revisit if a real agent's approvals take longer than its deadline should.
 3. **Approving with changes.** A person may want to approve a page to a different team. That needs the approved input journaled and used instead of the model's, and the model told what changed. It fits the design, as a field on `approvalDecided`, but isn't in this milestone.
 4. **Sub-runs in parallel share what's left of `maxTokens`,** each getting all of it, so together they can overshoot. Splitting it between them would be strict, but starves a sub-run its sibling didn't need. This spec accepts the overshoot, bounded by one step's sub-runs.
 5. **Who can decide.** `decide` records `by`, but doesn't check it. Authorisation belongs to the app that sends the message. Should a tool be able to name who may approve it, so the journal can show a decision was allowed?

@@ -1,6 +1,6 @@
 # 0009. Progress is told to a ref captured by the run's definition
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-25
 - **Milestone:** 2
 
@@ -41,7 +41,9 @@ Breaking the seq offset, telling before the write, the attempt number, or `resum
 
 **T3 (2026-11-25):** `test/run/delegate.test.ts`: one ref given to the root hears `resumed` from the root and its sub-run, and every event of both journals, each with its `runId`.
 
-Still to prove, in T8: the example's narration is built from progress alone. This record becomes Accepted then.
+**T8 (2026-11-27):** The example's narration is built from progress alone: `examples/incident-triage/narrate.ts` reads nothing but the `RunProgress` that `startRun` hands it, and nothing wraps the persistence any more. It prints every event of both runs, with the analyst's indented by its `runId`, and streams the model's text from `text` progress. `scripts/check-example.ts` checks that a crash at an approval, and one inside the analyst, followed by a resume, narrate exactly what an uninterrupted run does. On `resumed`, the example reads the journal up to its `seq` to learn what a run is waiting on. `test/start-run.test.ts`: `onProgress` hears `resumed`, every event of both journals and streamed text, and a listener that throws is logged while the run completes.
+
+Breaking it to check: not learning the call names a resumed run journaled earlier makes the example check fail.
 
 ## Consequences
 

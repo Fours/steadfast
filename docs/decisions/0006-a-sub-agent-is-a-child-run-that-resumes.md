@@ -1,6 +1,6 @@
 # 0006. A sub-agent is a child run, with its own journal, so an interrupted one resumes
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-25
 - **Milestone:** 2
 
@@ -43,7 +43,9 @@ Each of these makes a test fail: leaving the index out of the sub-run's id, repo
 
 From T5, in `test/run/cancel-tree.test.ts`: cancellation reaches every run of a three-level tree, and each journals its end. A finished root that is spawned again closes the sub-runs it left open (decision 0008).
 
-Still to prove, in T8: the example's analyst resumes after a crash. This record becomes Accepted then.
+**T8 (2026-11-27):** `scripts/check-example.ts`, which CI runs as `npm run example:check`: `--crash-after 3` kills the example with exit code 137 after the log analyst's second step. Run again, the root recovers, its pending delegation spawns the sub-run again, and `incident-4211/2.0` resumes from its journal at event 5. It goes on with its step 3, and its first two steps aren't asked again or retried. The two processes' narration, both runs' events, equals an uninterrupted run's, and so does the final text.
+
+Breaking it to check: starting the analyst's scripted model from its first step on resume, as a retried sub-run would, makes the check fail.
 
 ## Consequences
 
