@@ -300,7 +300,7 @@ Do these in order. Each one ends with passing tests.
 | T5. Cancellation across the tree | Done | 7556953 |
 | T6. Streaming and the fallback in the Anthropic adapter | Done | 887c3b9 |
 | T7. The OpenAI adapter | Done | 6b2ec6a |
-| T8. startRun, the example and the README | Done | |
+| T8. startRun, the example and the README | Done | 373e262 |
 
 ### T1. Model calls v2: options, streamed text, `paused`, bad input
 

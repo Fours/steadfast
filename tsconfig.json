@@ -27,7 +27,8 @@
     "paths": {
       "@kylewillett/steadfast": ["./src/index.ts"],
       "@kylewillett/steadfast/testkit": ["./src/testkit/index.ts"],
-      "@kylewillett/steadfast/anthropic": ["./src/anthropic/index.ts"]
+      "@kylewillett/steadfast/anthropic": ["./src/anthropic/index.ts"],
+      "@kylewillett/steadfast/openai": ["./src/openai/index.ts"]
     }
   },
   "include": ["src", "test", "examples", "scripts", "*.config.ts"],
