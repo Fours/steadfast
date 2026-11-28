@@ -491,12 +491,12 @@ Notes from T8:
 
 ## Definition of done
 
-- [ ] T1 to T8 are complete.
-- [ ] `npm run lint`, `typecheck`, `test`, `coverage` and `build` all pass, locally and in CI.
-- [ ] Line coverage is at least 90% for `src/`.
-- [ ] There are no runtime dependencies besides the Troupe peer, and both adapters' SDKs are optional peers.
-- [ ] `src/` builds with no Node types and imports no Node built-ins.
-- [ ] Records 0006 to 0011 are Accepted, each with its evidence, and 0005 is Superseded by 0010.
+- [x] T1 to T8 are complete.
+- [x] `npm run lint`, `typecheck`, `test`, `coverage` and `build` all pass, locally and in CI.
+- [x] Line coverage is at least 90% for `src/`.
+- [x] There are no runtime dependencies besides the Troupe peer, and both adapters' SDKs are optional peers.
+- [x] `src/` builds with no Node types and imports no Node built-ins.
+- [x] Records 0006 to 0011 are Accepted, each with its evidence, and 0005 is Superseded by 0010.
 
 ## Decision records
 
