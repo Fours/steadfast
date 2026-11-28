@@ -10,7 +10,8 @@ import {
   type RunEvent,
   type RunReport,
 } from '../../src/index.ts';
-import { FakeApiError, fakeClient, message } from './fake-client.ts';
+import { FakeApiError } from '../fake-api-error.ts';
+import { fakeClient, message } from './fake-client.ts';
 
 const request: ModelRequest = {
   system: 'You triage.',

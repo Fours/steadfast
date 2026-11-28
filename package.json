@@ -48,6 +48,10 @@
     "./anthropic": {
       "types": "./dist/anthropic/index.d.ts",
       "import": "./dist/anthropic/index.js"
+    },
+    "./openai": {
+      "types": "./dist/openai/index.d.ts",
+      "import": "./dist/openai/index.js"
     }
   },
   "sideEffects": false,
@@ -64,10 +68,14 @@
   },
   "peerDependencies": {
     "@anthropic-ai/sdk": "^1.14.0",
-    "@kylewillett/troupe": "^0.3.2"
+    "@kylewillett/troupe": "^0.3.2",
+    "openai": "^7.65.0"
   },
   "peerDependenciesMeta": {
     "@anthropic-ai/sdk": {
+      "optional": true
+    },
+    "openai": {
       "optional": true
     }
   },
@@ -79,6 +87,7 @@
     "@vitest/coverage-v8": "^4.1.12",
     "eslint": "^10.14.0",
     "eslint-config-prettier": "^10.1.8",
+    "openai": "^7.65.0",
     "prettier": "^3.9.10",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.72.1",

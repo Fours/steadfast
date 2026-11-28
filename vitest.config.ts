@@ -8,7 +8,13 @@ export default defineConfig({
       provider: 'v8',
       include: ['src/**/*.ts'],
       // Entry points only re-export, so they have no lines worth measuring.
-      exclude: ['src/index.ts', 'src/testkit/index.ts', 'src/anthropic/index.ts', 'src/**/*.d.ts'],
+      exclude: [
+        'src/index.ts',
+        'src/testkit/index.ts',
+        'src/anthropic/index.ts',
+        'src/openai/index.ts',
+        'src/**/*.d.ts',
+      ],
       thresholds: { lines: 90 },
     },
   },

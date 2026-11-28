@@ -126,13 +126,3 @@ export function message(
     ...overrides,
   };
 }
-
-/** An error shaped like the SDK's APIError: a status and headers. */
-export class FakeApiError extends Error {
-  constructor(
-    readonly status: number | undefined,
-    readonly headers: unknown = new Headers(),
-  ) {
-    super(`${String(status)} fake API error`);
-  }
-}

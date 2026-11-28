@@ -1,8 +1,9 @@
-// Error classification for the Anthropic adapter. Every failure becomes a ModelError, so the run
-// never inspects the SDK's error types, and the check reads `status` and `headers` structurally,
-// since the adapter never imports the SDK's error classes (decision 0004).
+// Error classification shared by the provider adapters. Every failure becomes a ModelError, so the
+// run never inspects an SDK's error types. Anthropic's and OpenAI's SDKs both put `status` and
+// `headers` on their errors and read the same retry headers, so one check reads them structurally,
+// since no adapter imports its SDK's error classes (decision 0004).
 
-import { ModelError } from '../model.js';
+import { ModelError } from './model.js';
 
 /** Statuses below 500 that may succeed if the same request is tried again. */
 const RETRYABLE_STATUSES = new Set([408, 409, 429]);

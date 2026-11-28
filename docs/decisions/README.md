@@ -30,3 +30,4 @@ Troupe's records are in `../troupe/docs/decisions/`. Cite them as "Troupe's 0011
 | [0008](0008-cancellation-is-journaled-in-every-run.md) | Cancellation is journaled in every run of the tree, and a finished run closes its unfinished sub-runs on recovery | Proposed | 2 |
 | [0009](0009-progress-is-told-to-a-ref.md) | Progress is told to a ref captured by the run's definition: journaled events with their `seq`, and streamed text at most once | Proposed | 2 |
 | [0010](0010-adapters-apply-their-providers-resend-rules.md) | Adapters apply their provider's rules for resending a response, and the journal stays verbatim | Accepted | 2 |
+| [0011](0011-the-second-adapter-is-openai-responses.md) | The second adapter is OpenAI's Responses API, because it differs from Anthropic's where `Model` could have been shaped by it | Accepted | 2 |

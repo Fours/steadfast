@@ -242,10 +242,11 @@ const model = openaiModel({ client: new OpenAI(), model: 'gpt-…' });
 
 - **No default model.** `model` is required, so the adapter never goes stale behind a caller's back.
 - **No dependency,** as for Anthropic ([0004](decisions/0004-built-on-troupe-with-no-other-dependencies.md)): `client` is structurally typed, `openai` is an optional peer dependency and a dev dependency, and a type test proves the real client fits.
-- **Stateless:** requests pass `store: false` and ask for `reasoning.encrypted_content`, so reasoning items can go back in the next request, and the journal, not OpenAI, holds the conversation.
-- **`raw` is the response's `output` items,** verbatim, and they go back as input items exactly as they came. Tool results go back as `function_call_output` items, with the output as JSON text.
-- **Mapping:** `function_call` items are tool calls, with `arguments` parsed as JSON, or an `inputError` if they aren't JSON. A response with tool calls is `toolUse`. An incomplete response for `max_output_tokens` is `maxOutputTokens`. A refusal content part, or an incomplete response for `content_filter`, is `refusal`. Anything else complete is `endTurn`. Text is the `output_text` parts, joined.
-- **Streaming** through `client.responses.stream()`, with text deltas to `onText` and the final response from it.
+- **Options** besides `client` and `model`, as for Anthropic: `stream` (default `true`; `false` sends one plain request), `maxTokens`, sent as `max_output_tokens`, and `effort`, sent as `reasoning.effort`. Both are left out by default, so the model's own defaults apply.
+- **Stateless:** requests pass `store: false` and ask for `reasoning.encrypted_content`, so reasoning items can go back in the next request, and the journal, not OpenAI, holds the conversation. The system prompt goes in `instructions`.
+- **`raw` is the response's `output` items,** verbatim, and they go back as input items exactly as they came. Tool results go back as `function_call_output` items, paired by the call's `call_id`, not its item `id`, with the output as JSON text. The item has no error flag, so a failure goes back as `{"error": "..."}`.
+- **Mapping:** `function_call` items are tool calls, with `arguments` parsed as JSON, or an `inputError` if they aren't JSON or aren't an object. A response with tool calls is `toolUse`. An incomplete response for `max_output_tokens` is `maxOutputTokens`. A refusal content part, or an incomplete response for `content_filter`, is `refusal`. Anything else complete is `endTurn`. Text is the `output_text` parts, joined. Any other incomplete reason (`max_messages`, `steered`) is a `ModelError` that isn't retryable. A `failed` response is a `ModelError`, retryable for `server_error` and `rate_limit_exceeded`. `input_tokens` already counts cached tokens, so nothing is added to it. Tools are sent with `strict: false`, since strict mode needs schemas written for it.
+- **Streaming** through `client.responses.create({ stream: true })`, with text deltas to `onText`, and the response from the event that ends the stream (`response.completed`, `response.incomplete` or `response.failed`), as the provider sent it. Not through `responses.stream()`: its final response adds `parsed` and `parsed_arguments` fields the provider never sent, and its params can't be typed structurally ([0011](decisions/0011-the-second-adapter-is-openai-responses.md)).
 - **Errors** are classified exactly as for Anthropic: by status, with `retry-after-ms` and `retry-after`. The check moves to a module both adapters share.
 - T7 checks every shape here against the SDK's types at the time, and the type test keeps it honest after.
 
@@ -296,9 +297,9 @@ Do these in order. Each one ends with passing tests.
 | T2. Progress | Done | e31342e |
 | T3. Sub-agents and limits | Done | 5128d09 |
 | T4. Approvals | Done | 147f3b8 |
-| T5. Cancellation across the tree | Done | |
-| T6. Streaming and the fallback in the Anthropic adapter | Not started | |
-| T7. The OpenAI adapter | Not started | |
+| T5. Cancellation across the tree | Done | 7556953 |
+| T6. Streaming and the fallback in the Anthropic adapter | Done | 887c3b9 |
+| T7. The OpenAI adapter | Done | |
 | T8. startRun, the example and the README | Not started | |
 
 ### T1. Model calls v2: options, streamed text, `paused`, bad input
@@ -446,12 +447,21 @@ Notes from T6:
 
 **Done when** tests cover, with a fake client and no network:
 
-- [ ] A transcript maps to Responses API input: the user turn, each response's output items verbatim, and tool results as `function_call_output` items.
-- [ ] Each kind of response maps to its stop reason as described, and arguments that aren't JSON give an `inputError`.
-- [ ] Requests pass `store: false`, ask for encrypted reasoning, and pass `maxRetries: 0`.
-- [ ] Errors are classified by the shared check.
-- [ ] The run tests from milestone 1's T3 pass on an OpenAI-shaped fake client, unchanged but for the model.
-- [ ] Type test: `new OpenAI()` fits the structural client type.
+- [x] A transcript maps to Responses API input: the user turn, each response's output items verbatim, and tool results as `function_call_output` items.
+- [x] Each kind of response maps to its stop reason as described, and arguments that aren't JSON give an `inputError`.
+- [x] Requests pass `store: false`, ask for encrypted reasoning, and pass `maxRetries: 0`.
+- [x] Errors are classified by the shared check.
+- [x] The run tests from milestone 1's T3 that involve the model pass on an OpenAI-shaped fake client, with the same run and the same checks, in the provider's shapes.
+- [x] Type test: `new OpenAI()` fits the structural client type.
+
+Notes from T7:
+
+- Checked against `openai` 7.65.0's types. Where they differed from the design above, it was corrected in place: pairing by `call_id`, cached tokens, `strict`, the `failed` status and the newer incomplete reasons, and streaming through `create`, not `responses.stream()`.
+- "Unchanged but for the model" can't hold literally: `test/run/run.test.ts` checks journals that hold the scripted model's `raw` and name. `test/openai/run.test.ts` runs the same T3 runs and checks on `openaiModel`, in the Responses API's shapes. The T3 items that don't touch the model (ignoring a message for another step, `onEvent` purity, `agent()`'s checks) aren't repeated.
+- The client needs only `responses.create`, for both modes.
+- The shared check is `src/adapter-errors.ts`. Its tests moved to `test/adapter-errors.test.ts`, and the fake API error both adapters' tests throw to `test/fake-api-error.ts`.
+- Not proven: that OpenAI accepts its encrypted reasoning items back as sent, with `store: false`. It's documented, but no test here sends a real request. Milestone 4's recorded runs are the place.
+- `README.md` doesn't describe the adapter yet. That's in T8.
 
 ### T8. startRun, the example and the README
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { toModelError } from '../../src/anthropic/errors.ts';
-import { ModelError } from '../../src/index.ts';
-import { FakeApiError } from './fake-client.ts';
+import { toModelError } from '../src/adapter-errors.ts';
+import { ModelError } from '../src/index.ts';
+import { FakeApiError } from './fake-api-error.ts';
 
 describe('toModelError', () => {
   it.each([

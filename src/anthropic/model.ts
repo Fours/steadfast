@@ -5,7 +5,7 @@
 import { jsonProblem, type JsonValue } from '../json.js';
 import type { Model, ModelCallOptions } from '../model.js';
 import type { AnthropicClient, AnthropicCreateParams, AnthropicRequestOptions } from './client.js';
-import { toModelError } from './errors.js';
+import { toModelError } from '../adapter-errors.js';
 import { fromMessage, toParams, type RequestSettings } from './mapping.js';
 
 /** How hard the model thinks and how many tokens it spends, from least to most. */
